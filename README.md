@@ -1,5 +1,4 @@
-# autoTypeScript: Data-Driven Types IDE (Proof of Concept)
-
+# autoTypeScript: Data-Driven Types IDE
 ## Vision
 
 autoTypeScript is an experimental, in-browser JavaScript development environment that automatically derives type information from the *real data* your code processes at runtime. Instead of manual type declarations, it observes your code's behavior to infer types, aiming for a more natural and data-aware coding experience.
