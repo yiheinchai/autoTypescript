@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data-Driven Types IDE - AST Enhanced v3 (Hover Fixes)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/material-darker.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/hint/show-hint.css">
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .controls { padding: 10px 15px; background-color: #252526; border-bottom: 1px solid #333333; display: flex; gap: 10px; align-items: center; }
+        button { background-color: #007acc; color: white; border: none; padding: 8px 15px; border-radius: 3px; cursor: pointer; font-weight: bold; transition: background-color 0.2s ease; }
+        button:hover { background-color: #005f9e; }
+        .main-container { display: flex; flex: 1; overflow: hidden; }
+        .editor-pane { flex: 0 0 60%; display: flex; flex-direction: column; padding: 0; border-right: 1px solid #333333; position: relative; }
+        .CodeMirror { flex-grow: 1; font-size: 14px; line-height: 1.5; height: auto !important; border: none; }
+        .info-pane { flex: 0 0 40%; display: flex; flex-direction: column; padding: 10px; background-color: #252526; overflow-y: hidden; }
+        .panel { background-color: #1e1e1e; border: 1px solid #333333; border-radius: 4px; margin-bottom: 10px; padding: 10px 15px; display: flex; flex-direction: column; overflow-y: auto; }
+        .panel:last-child { margin-bottom: 0; }
+        .panel h2 { margin-top: 0; margin-bottom: 8px; font-size: 1.1em; color: #569cd6; border-bottom: 1px solid #333333; padding-bottom: 8px; }
+        #type-signatures-panel { flex: 1; }
+        #console-panel { flex: 1; }
+        .type-signature-entry { font-family: 'Consolas', 'Monaco', monospace; padding: 4px 0; color: #9cdcfe; font-size: 0.9em; white-space: pre-wrap; word-break: break-all; }
+        .type-signature-entry:not(:last-child) { border-bottom: 1px dashed #333333; }
+        .console-message { font-family: 'Consolas', 'Monaco', monospace; white-space: pre-wrap; word-break: break-all; padding: 3px 0; font-size: 0.9em; line-height: 1.4; }
+        .console-message .timestamp { color: #888; margin-right: 5px; font-size: 0.9em; }
+        .console-message .type-log { color: #cccccc; }
+        .console-message .type-error { color: #f48771; font-weight: bold; }
+        .console-message .type-warn { color: #f0c674; }
+        .console-message .type-info { color: #569cd6; }
+
+        .cm-custom-tooltip {
+            position: absolute;
+            z-index: 10000; /* Ensure very high z-index */
+            background-color: #2d2d2d; 
+            color: #d4d4d4;
+            border: 1px solid #4a4a4a;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+            max-width: 450px; 
+            white-space: pre-wrap; 
+            word-break: break-all; 
+            box-shadow: 0 3px 8px rgba(0,0,0,0.3);
+            pointer-events: none; 
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button id="run-button">Run Code</button>
+        <button id="clear-cache-button">Clear Cache & Signatures</button>
+    </div>
+    <div class="main-container">
+        <div class="editor-pane">
+            <textarea id="code-editor"></textarea>
+        </div>
+        <div class="info-pane">
+            <div id="type-signatures-panel" class="panel">
+                <h2>Inferred Type Signatures</h2>
+                <div id="type-signatures"></div>
+            </div>
+            <div id="console-panel" class="panel">
+                <h2>Console Output</h2>
+                <div id="console-output"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/edit/matchbrackets.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/addon/edit/closebrackets.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn/8.10.0/acorn.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/acorn-walk/8.2.0/walk.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/astring@1.9.0/dist/astring.min.js"></script> 
+
+
+    <script>
+        // --- Global State ---
+        let typeCache = {}; 
+        let codeMirrorEditor;
+        const originalConsole = {}; 
+        const customConsoleOutput = []; 
+        let analysisAST = null; 
+        let currentTooltipElement = null; 
+
+        const INSTRUMENTATION_NAMESPACE = "__DDT_IDE__";
+        window[INSTRUMENTATION_NAMESPACE] = {
+            recordArguments: (functionName, originalArgs, thisVal, paramNamesFromAST) => {
+                const args = Array.from(originalArgs);
+                
+                if (!typeCache[functionName]) {
+                    typeCache[functionName] = { callCount: 0, paramData: {}, paramNames: paramNamesFromAST || [] };
+                } else {
+                    if (paramNamesFromAST && paramNamesFromAST.length > 0 && JSON.stringify(typeCache[functionName].paramNames) !== JSON.stringify(paramNamesFromAST)) {
+                         typeCache[functionName].paramNames = paramNamesFromAST;
+                    }
+                }
+                typeCache[functionName].callCount++;
+
+                args.forEach((arg, index) => {
+                    if (!typeCache[functionName].paramData[index]) {
+                        typeCache[functionName].paramData[index] = [];
+                    }
+                    const clonedArg = deepCloneSafe(arg);
+                    
+                    const MAX_SAMPLES_PER_PARAM = 50; 
+                    if (typeCache[functionName].paramData[index].length >= MAX_SAMPLES_PER_PARAM) {
+                        typeCache[functionName].paramData[index].shift(); 
+                    }
+                    typeCache[functionName].paramData[index].push(clonedArg);
+                });
+            }
+        };
+
+        const BROWSER_CONSOLE_LOG = (console.log).bind(console);
+        const BROWSER_CONSOLE_INFO = (console.info).bind(console);
+        const BROWSER_CONSOLE_WARN = (console.warn).bind(console);
+        const BROWSER_CONSOLE_ERROR = (console.error).bind(console);
+        const UNDEFINED_MARKER = '[[UNDEFINED_MARKER_VALUE]]'; 
+
+        function deepCloneSafe(value, depth = 0, maxDepth = 10) { 
+            if (depth > maxDepth) return "[Max Depth Exceeded]";
+            if (value === undefined) return UNDEFINED_MARKER;
+            if (value === null || typeof value !== 'object') {
+                return value;
+            }
+            if (typeof value === 'function') return "[Function]";
+
+            try {
+                const seen = new WeakSet();
+                return JSON.parse(JSON.stringify(value, (key, val) => {
+                    if (val === undefined) return UNDEFINED_MARKER;
+                    if (typeof val === 'function') return "[Function]";
+                    if (typeof val === 'object' && val !== null) {
+                        if (seen.has(val)) return "[Circular]";
+                        seen.add(val);
+                    }
+                    return val;
+                }));
+            } catch (e) { 
+                if (Array.isArray(value)) {
+                    return value.map(item => deepCloneSafe(item, depth + 1, maxDepth));
+                }
+                const objRepresentation = {};
+                for (const key in value) {
+                    if (Object.prototype.hasOwnProperty.call(value, key)) {
+                         try { 
+                            objRepresentation[key] = deepCloneSafe(value[key], depth + 1, maxDepth);
+                         } catch (innerE) {
+                            objRepresentation[key] = "[Error Cloning Property]";
+                         }
+                    }
+                }
+                return objRepresentation;
+            }
+        }
+        
+        function inferSingleValueType(value) {
+            if (value === UNDEFINED_MARKER) return "undefined";
+            if (value === null) return "null";
+            if (value === "[Function]") return "function";
+            if (value === "[Circular]") return "object (circular)";
+            if (value === "[Max Depth Exceeded]") return "object (max depth)";
+            
+            const type = typeof value;
+
+            if (type === "object") {
+                if (Array.isArray(value)) {
+                    if (value.length === 0) return "Array<empty>";
+                    const elementTypes = new Set();
+                    value.forEach(item => elementTypes.add(inferSingleValueType(item)));
+                    const uniqueElementTypes = Array.from(elementTypes);
+                    return `Array<${uniqueElementTypes.length > 1 ? uniqueElementTypes.join(' | ') : uniqueElementTypes[0] || 'unknown'}>`;
+                } else {
+                    const shape = {};
+                    let isEmpty = true;
+                    for (const key in value) {
+                        if (Object.prototype.hasOwnProperty.call(value, key)) {
+                            isEmpty = false;
+                            shape[key] = inferSingleValueType(value[key]);
+                        }
+                    }
+                    if (isEmpty) return "{}";
+                    const formattedShape = Object.entries(shape)
+                        .map(([k, t]) => `${/^[a-zA-Z_$][0-9a-zA-Z_$]*$/.test(k) ? k : JSON.stringify(k)}: ${t}`)
+                        .join(', ');
+                    return `{ ${formattedShape} }`;
+                }
+            }
+            return type;
+         }
+
+        function inferTypeForParam(observedValues) {
+            if (!observedValues || observedValues.length === 0) return "any";
+            const types = new Set();
+            observedValues.forEach(value => {
+                types.add(inferSingleValueType(value));
+            });
+            return Array.from(types).join(' | ');
+        }
+
+
+        function updateTypeSignatureDisplay() {
+            const displayPanel = document.getElementById('type-signatures');
+            displayPanel.innerHTML = '';
+
+            for (const funcName in typeCache) {
+                if (!Object.prototype.hasOwnProperty.call(typeCache, funcName)) continue;
+                const funcData = typeCache[funcName];
+                const paramNames = funcData.paramNames || []; 
+                const paramTypes = [];
+                
+                let maxParamsToDisplay = paramNames.length;
+                if (funcData.paramData) {
+                     const observedParamIndices = Object.keys(funcData.paramData).map(Number);
+                     if(observedParamIndices.length > 0) {
+                        maxParamsToDisplay = Math.max(maxParamsToDisplay, Math.max(...observedParamIndices) + 1);
+                     }
+                }
+                if (paramNames.length === 0 && maxParamsToDisplay === 0 && funcData.callCount > 0 && funcData.paramData) {
+                     maxParamsToDisplay = Object.keys(funcData.paramData).length;
+                }
+
+                for (let i = 0; i < maxParamsToDisplay; i++) {
+                    const paramName = paramNames[i] || `arg${i}`;
+                    const observedValues = (funcData.paramData && funcData.paramData[i]) ? funcData.paramData[i] : [];
+                    const inferredParamType = inferTypeForParam(observedValues);
+                    paramTypes.push(`${paramName}: ${inferredParamType}`);
+                }
+                
+                const signatureDiv = document.createElement('div');
+                signatureDiv.className = 'type-signature-entry';
+                signatureDiv.textContent = `${funcName}(${paramTypes.join(', ')})`;
+                displayPanel.appendChild(signatureDiv);
+            }
+        }
+
+        function transformCodeForInstrumentation(code) {
+            BROWSER_CONSOLE_LOG("[AST] Starting transformation");
+            try {
+                if (typeof acorn !== 'object' || typeof acorn.parse !== 'function') { throw new Error("Acorn.js parser not loaded."); }
+                if (typeof acorn.walk !== 'object' || typeof acorn.walk.ancestor !== 'function') { throw new Error("Acorn-walk not loaded."); }
+                if (typeof astring !== 'object' || typeof astring.generate !== 'function') { 
+                    BROWSER_CONSOLE_ERROR('[AST DEBUG] astring global:', astring);
+                    throw new Error("Astring.js generator not loaded or astring.generate is not a function."); 
+                }
+
+                const ast = acorn.parse(code, { ecmaVersion: 'latest', locations: true, allowReturnOutsideFunction: true });
+                
+                acorn.walk.ancestor(ast, {
+                    FunctionDeclaration(node, ancestors) {
+                        if (node.id && node.id.name) { 
+                           instrumentFunctionNode(node, node.id.name, ancestors);
+                        }
+                    },
+                    FunctionExpression(node, ancestors) {
+                        let name = node.id ? node.id.name : null;
+                        if (!name) { 
+                            const parent = ancestors[ancestors.length - 2];
+                            if (parent) {
+                                if (parent.type === 'VariableDeclarator' && parent.id.type === 'Identifier') name = parent.id.name;
+                                else if (parent.type === 'AssignmentExpression' && parent.left.type === 'Identifier') name = parent.left.name;
+                                else if (parent.type === 'Property' && parent.key.type === 'Identifier') name = parent.key.name;
+                            }
+                        }
+                        if (name) instrumentFunctionNode(node, name, ancestors);
+                    },
+                    ArrowFunctionExpression(node, ancestors) {
+                        let name = null;
+                        const parent = ancestors[ancestors.length - 2];
+                        if (parent) {
+                            if (parent.type === 'VariableDeclarator' && parent.id.type === 'Identifier') name = parent.id.name;
+                            else if (parent.type === 'AssignmentExpression' && parent.left.type === 'Identifier') name = parent.left.name;
+                            else if (parent.type === 'Property' && parent.key.type === 'Identifier' && parent.kind === 'init') name = parent.key.name;
+                        }
+                        if (name) instrumentFunctionNode(node, name, ancestors);
+                    }
+                });
+
+                const instrumentedCode = astring.generate(ast);
+                BROWSER_CONSOLE_LOG("[AST] Transformation complete.");
+                return instrumentedCode;
+
+            } catch (e) {
+                BROWSER_CONSOLE_ERROR("[AST] Error during transformation:", e.message, e.stack ? e.stack : '');
+                customConsoleOutput.push({ type: 'error', message: `AST Transformation Error: ${e.message}`, timestamp: new Date() });
+                updateConsoleDisplay();
+                return code; 
+            }
+        }
+
+        function instrumentFunctionNode(node, funcName, ancestors) {
+            if (node._instrumentedDDT) return;
+
+            const paramNames = node.params.map(p => {
+                if (p.type === 'Identifier') return p.name;
+                if (p.type === 'AssignmentPattern' && p.left.type === 'Identifier') return p.left.name; 
+                if (p.type === 'RestElement' && p.argument.type === 'Identifier') return `...${p.argument.name}`; 
+                return '_param_'; 
+            });
+            
+            let argsToRecord;
+            // Arrow functions do not have their own `arguments` object.
+            // We must construct an array from their named parameters.
+            if (node.type === 'ArrowFunctionExpression') {
+                 const paramIdentifiers = node.params.map(p => {
+                    if (p.type === 'Identifier') return {type: 'Identifier', name: p.name};
+                    if (p.type === 'AssignmentPattern') return {type: 'Identifier', name: p.left.name}; 
+                    if (p.type === 'RestElement') return {type: 'Identifier', name: p.argument.name};
+                    return {type: 'Identifier', name: '_unknown_'}; // Should not happen with current paramNames logic
+                });
+                argsToRecord = { type: 'ArrayExpression', elements: paramIdentifiers };
+            } else { 
+                 argsToRecord = { type: 'Identifier', name: 'arguments' };
+            }
+
+            const recordCall = {
+                type: 'ExpressionStatement',
+                expression: {
+                    type: 'CallExpression',
+                    callee: {
+                        type: 'MemberExpression',
+                        object: { type: 'Identifier', name: INSTRUMENTATION_NAMESPACE },
+                        property: { type: 'Identifier', name: 'recordArguments' },
+                        computed: false
+                    },
+                    arguments: [
+                        { type: 'Literal', value: funcName },
+                        argsToRecord, 
+                        { type: 'ThisExpression' },
+                        { type: "ArrayExpression", elements: paramNames.map(name => ({type: "Literal", value: name}))}
+                    ],
+                    optional: false
+                }
+            };
+
+            if (node.body.type === "BlockStatement") {
+                node.body.body.unshift(recordCall);
+            } else { // Arrow function with implicit return
+                const originalBodyExpression = node.body;
+                const returnStatement = { type: "ReturnStatement", argument: originalBodyExpression };
+                node.body = {
+                    type: "BlockStatement",
+                    body: [recordCall, returnStatement]
+                };
+                // Important: Mark that it's no longer a concise body
+                if (node.type === 'ArrowFunctionExpression') {
+                    node.expression = false; 
+                }
+            }
+            node._instrumentedDDT = true; 
+            // BROWSER_CONSOLE_LOG(`[AST] Instrumented function: ${funcName}`); // Can be verbose
+        }
+
+
+        function executeCode() {
+            BROWSER_CONSOLE_LOG('[DEBUG] executeCode START');
+            clearConsoleDisplay();
+            overrideConsole();
+            analysisAST = null; 
+
+            try {
+                const originalCode = codeMirrorEditor.getValue();
+                
+                try {
+                    analysisAST = acorn.parse(originalCode, { ecmaVersion: 'latest', locations: true, allowReturnOutsideFunction: true });
+                } catch (e) {
+                    BROWSER_CONSOLE_WARN("[AST] Failed to parse original code for hover analysis:", e);
+                    analysisAST = null; 
+                }
+
+                const instrumentedCode = transformCodeForInstrumentation(originalCode);
+                
+                BROWSER_CONSOLE_LOG('[DEBUG] Evaluating instrumented code...');
+                (function() {
+                    eval(instrumentedCode);
+                }).call(window);
+                BROWSER_CONSOLE_LOG('[DEBUG] User code evaluation finished.');
+
+            } catch (error) {
+                console.error('Execution Error:', error.name, error.message, error.stack ? error.stack : '');
+            } finally {
+                restoreConsole();
+                updateTypeSignatureDisplay(); 
+                saveStateToLocalStorage();
+                BROWSER_CONSOLE_LOG('[DEBUG] executeCode END');
+            }
+        }
+
+        function createTooltip() {
+            if (currentTooltipElement) {
+                currentTooltipElement.remove();
+            }
+            currentTooltipElement = document.createElement("div");
+            currentTooltipElement.className = "cm-custom-tooltip";
+            currentTooltipElement.style.display = 'none'; 
+            document.body.appendChild(currentTooltipElement);
+            return currentTooltipElement;
+        }
+        
+        function showTooltipAt(cm, clientX, clientY, content) {
+            const tooltip = currentTooltipElement || createTooltip();
+            tooltip.innerHTML = content; 
+            tooltip.style.display = 'block';
+        
+            let top = clientY;
+            let left = clientX;
+        
+            const tooltipHeight = tooltip.offsetHeight;
+            const tooltipWidth = tooltip.offsetWidth;
+        
+            if (top - tooltipHeight - 10 > 0) { 
+                tooltip.style.top = (top - tooltipHeight - 10) + "px";
+            } else { 
+                tooltip.style.top = (top + 15) + "px";
+            }
+        
+            if (left + tooltipWidth + 10 > window.innerWidth) {
+                tooltip.style.left = (window.innerWidth - tooltipWidth - 15) + "px";
+            } else {
+                tooltip.style.left = (left + 10) + "px";
+            }
+        }
+
+        function hideTooltip() {
+            if (currentTooltipElement) {
+                currentTooltipElement.style.display = 'none';
+            }
+        }
+        
+        function getFunctionSignatureString(funcName, cacheEntry) {
+            if (!cacheEntry) return `<b>(function) ${funcName}</b>: type data not available`;
+
+            const pNames = cacheEntry.paramNames || [];
+            const pTypes = [];
+            let maxP = pNames.length;
+
+            if (cacheEntry.paramData) {
+                const obsIdx = Object.keys(cacheEntry.paramData).map(Number);
+                if (obsIdx.length > 0) maxP = Math.max(maxP, Math.max(...obsIdx) + 1);
+            }
+            if (maxP === 0 && cacheEntry.callCount > 0 && cacheEntry.paramData && Object.keys(cacheEntry.paramData).length > 0) {
+                 maxP = Object.keys(cacheEntry.paramData).length;
+            }
+
+            for (let i = 0; i < maxP; i++) {
+                const pName = pNames[i] || `arg${i}`;
+                const obsVals = (cacheEntry.paramData && cacheEntry.paramData[i]) ? cacheEntry.paramData[i] : [];
+                pTypes.push(`${pName}: ${inferTypeForParam(obsVals)}`);
+            }
+            return `<b>(function) ${funcName}</b>(${pTypes.join(', ')})`;
+        }
+
+        function getParameterSignatureString(paramName, funcName, cacheEntry) {
+            if (!cacheEntry) return `<b>(parameter) ${paramName}</b>: type data not available for ${funcName}`;
+            
+            const cleanParamName = paramName.startsWith("...") ? paramName.substring(3) : paramName;
+            const paramIndex = (cacheEntry.paramNames || []).findIndex(p => {
+                const cleanPName = p.startsWith("...") ? p.substring(3) : p;
+                return cleanPName === cleanParamName;
+            });
+            
+            let inferredParamType = "any";
+
+            if (paramIndex !== -1 && cacheEntry.paramData && cacheEntry.paramData[paramIndex]) {
+                inferredParamType = inferTypeForParam(cacheEntry.paramData[paramIndex]);
+            } else if (paramIndex === -1 && cacheEntry.paramNames && cacheEntry.paramNames.length === 0 && cacheEntry.paramData && cacheEntry.paramData[0] && (paramName === "arg0" || cleanParamName === "arg0")) {
+                inferredParamType = inferTypeForParam(cacheEntry.paramData[0]);
+            }
+
+            return `<b>(parameter) ${paramName}</b>: ${inferredParamType}`;
+        }
+
+
+        function setupEditorHoverTips(cm) {
+            // BROWSER_CONSOLE_LOG("[HOVER SETUP] Attempting to setupEditorHoverTips.");
+
+            if (!cm || typeof cm.getWrapperElement !== 'function') {
+                BROWSER_CONSOLE_ERROR("[HOVER SETUP] CodeMirror instance (cm) is invalid or getWrapperElement is not a function!");
+                return;
+            }
+            const wrapper = cm.getWrapperElement();
+            if (!wrapper) {
+                BROWSER_CONSOLE_ERROR("[HOVER SETUP] CodeMirror wrapper element not found!");
+                return;
+            }
+
+            let hoverTimeout = null;
+
+            wrapper.addEventListener('mousemove', (event) => {
+                clearTimeout(hoverTimeout);
+                hideTooltip();
+
+                hoverTimeout = setTimeout(() => {
+                    const editorPos = cm.coordsChar({ left: event.clientX, top: event.clientY }, 'window');
+                    const editorToken = cm.getTokenAt(editorPos);
+
+                    if (!analysisAST) { hideTooltip(); return; }
+                    if (!editorToken || !editorToken.string.trim() || editorToken.type === "comment") { hideTooltip(); return; }
+
+                    // BROWSER_CONSOLE_LOG(`[HOVER TOKEN] Current: '${editorToken.string}', Type: '${editorToken.type}', L${editorPos.line + 1} Ch${editorPos.ch}`);
+                    let signatureContent = null;
+                    let nodeFoundForHover = false; 
+
+                    try {
+                        acorn.walk.ancestor(analysisAST, {
+                            // --- Visitor for Function Declarations ---
+                            FunctionDeclaration(node, ancestors) {
+                                if (nodeFoundForHover) return;
+                                // Check function name (node.id)
+                                if (node.id && node.id.type === 'Identifier') {
+                                    if (node.id.loc.start.line === (editorPos.line + 1) &&
+                                        node.id.name === editorToken.string &&
+                                        node.id.loc.start.column <= editorPos.ch &&
+                                        editorPos.ch < node.id.loc.end.column) {
+                                        
+                                        BROWSER_CONSOLE_LOG(`[MATCH FunctionDeclaration NAME] Token: '${editorToken.string}', AST ID: '${node.id.name}'`);
+                                        signatureContent = getFunctionSignatureString(node.id.name, typeCache[node.id.name]);
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                }
+                                // Check parameters
+                                for (const param of node.params) { 
+                                    if (nodeFoundForHover) break;
+                                    let paramNodeToCompare = param;
+                                    if (param.type === 'AssignmentPattern') paramNodeToCompare = param.left; 
+                                    if (param.type === 'RestElement') paramNodeToCompare = param.argument; 
+
+                                    if (paramNodeToCompare.type === 'Identifier' &&
+                                        paramNodeToCompare.loc.start.line === (editorPos.line + 1) &&
+                                        paramNodeToCompare.name === editorToken.string &&
+                                        paramNodeToCompare.loc.start.column <= editorPos.ch &&
+                                        editorPos.ch < paramNodeToCompare.loc.end.column) {
+
+                                        BROWSER_CONSOLE_LOG(`[MATCH FunctionDeclaration PARAM] Token: '${editorToken.string}', AST Param: '${paramNodeToCompare.name}'`);
+                                        // Try to find function name more robustly
+                                        let funcName = node.id ? node.id.name : null;
+                                        if (!funcName) {
+                                            const parentDeclarator = ancestors.find(a => a.type === 'VariableDeclarator' && a.init === node);
+                                            if (parentDeclarator && parentDeclarator.id.type === 'Identifier') {
+                                                funcName = parentDeclarator.id.name;
+                                            }
+                                        }
+                                        signatureContent = getParameterSignatureString(paramNodeToCompare.name, funcName || 'anonymous', typeCache[funcName]);
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                }
+                            },
+                            // --- Visitor for Variable Declarators ---
+                            VariableDeclarator(node, ancestors) {
+                                if (nodeFoundForHover) return;
+                                // Check variable name (node.id)
+                                if (node.id && node.id.type === 'Identifier') {
+                                    if (node.id.loc.start.line === (editorPos.line + 1) &&
+                                        node.id.name === editorToken.string &&
+                                        node.id.loc.start.column <= editorPos.ch &&
+                                        editorPos.ch < node.id.loc.end.column) {
+
+                                        BROWSER_CONSOLE_LOG(`[MATCH VariableDeclarator NAME] Token: '${editorToken.string}', AST ID: '${node.id.name}'`);
+                                        if (node.init && (node.init.type === 'FunctionExpression' || node.init.type === 'ArrowFunctionExpression')) {
+                                            signatureContent = getFunctionSignatureString(node.id.name, typeCache[node.id.name]);
+                                        } else if (node.init && node.init.type === 'Literal') {
+                                            signatureContent = `<b>(const/let/var) ${node.id.name}</b>: ${inferSingleValueType(node.init.value)}`;
+                                        } else {
+                                            // Fallback for other types of variable initializations
+                                            if (typeCache[node.id.name] && typeCache[node.id.name].paramData !== undefined) { // Check if it's a known function
+                                                 signatureContent = getFunctionSignatureString(node.id.name, typeCache[node.id.name]);
+                                            } else {
+                                                 signatureContent = `<b>(variable) ${node.id.name}</b>: (type from runtime or unknown)`;
+                                            }
+                                        }
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                }
+                                // If the init is a function, check its params too
+                                if (node.init && (node.init.type === 'FunctionExpression' || node.init.type === 'ArrowFunctionExpression')) {
+                                    const funcExprNode = node.init;
+                                    for (const param of funcExprNode.params) { 
+                                        if (nodeFoundForHover) break;
+                                        let paramNodeToCompare = param;
+                                        if (param.type === 'AssignmentPattern') paramNodeToCompare = param.left;
+                                        if (param.type === 'RestElement') paramNodeToCompare = param.argument;
+
+                                        if (paramNodeToCompare.type === 'Identifier' &&
+                                            paramNodeToCompare.loc.start.line === (editorPos.line + 1) &&
+                                            paramNodeToCompare.name === editorToken.string &&
+                                            paramNodeToCompare.loc.start.column <= editorPos.ch &&
+                                            editorPos.ch < paramNodeToCompare.loc.end.column) {
+
+                                            BROWSER_CONSOLE_LOG(`[MATCH VariableDeclarator FUNC_PARAM] Token: '${editorToken.string}', AST Param: '${paramNodeToCompare.name}'`);
+                                            const funcName = node.id.name; // Name from VariableDeclarator
+                                            signatureContent = getParameterSignatureString(paramNodeToCompare.name, funcName, typeCache[funcName]);
+                                            nodeFoundForHover = true; 
+                                            throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                        }
+                                    }
+                                }
+                            },
+                             // --- Visitor for Arrow Function Expressions (params) ---
+                            ArrowFunctionExpression(node, ancestors) {
+                                if (nodeFoundForHover) return;
+                                const parent = ancestors[ancestors.length-2];
+                                let funcName = null;
+                                if (parent) {
+                                    if (parent.type === 'VariableDeclarator' && parent.init === node && parent.id.type === 'Identifier') funcName = parent.id.name;
+                                    else if (parent.type === 'Property' && parent.value === node && parent.key.type === 'Identifier') funcName = parent.key.name;
+                                    // Could also be an argument to a higher-order function, etc.
+                                }
+                                for (const param of node.params) { 
+                                    if (nodeFoundForHover) break;
+                                    let paramNodeToCompare = param;
+                                    if (param.type === 'AssignmentPattern') paramNodeToCompare = param.left;
+                                    if (param.type === 'RestElement') paramNodeToCompare = param.argument;
+
+                                    if (paramNodeToCompare.type === 'Identifier' &&
+                                        paramNodeToCompare.loc.start.line === (editorPos.line + 1) &&
+                                        paramNodeToCompare.name === editorToken.string &&
+                                        paramNodeToCompare.loc.start.column <= editorPos.ch &&
+                                        editorPos.ch < paramNodeToCompare.loc.end.column) {
+
+                                        BROWSER_CONSOLE_LOG(`[MATCH ArrowFunctionExpression PARAM] Token: '${editorToken.string}', AST Param: '${paramNodeToCompare.name}'`);
+                                        signatureContent = getParameterSignatureString(paramNodeToCompare.name, funcName || 'anonymousArrow', typeCache[funcName]);
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                }
+                            },
+                            // --- Visitor for Property (Key) in Object Literals during definition ---
+                            Property(node, ancestors) {
+                                if (nodeFoundForHover) return;
+                                // Check if hovering over the key of a property definition
+                                if (node.key && node.key.type === 'Identifier' && 
+                                    node.key.loc.start.line === (editorPos.line + 1) &&
+                                    node.key.name === editorToken.string &&
+                                    node.key.loc.start.column <= editorPos.ch &&
+                                    editorPos.ch < node.key.loc.end.column) {
+                                    
+                                    if (node.value && (node.value.type === 'FunctionExpression' || node.value.type === 'ArrowFunctionExpression' || node.method === true)) {
+                                        BROWSER_CONSOLE_LOG(`[MATCH Property (Method Def) KEY] Token: '${editorToken.string}', AST Key: '${node.key.name}'`);
+                                        signatureContent = getFunctionSignatureString(node.key.name, typeCache[node.key.name]);
+                                    } else {
+                                        BROWSER_CONSOLE_LOG(`[MATCH Property (Data Def) KEY] Token: '${editorToken.string}', AST Key: '${node.key.name}'`);
+                                        signatureContent = `<b>(property key) ${node.key.name}</b>: (defined here)`; // Simplified for now
+                                    }
+                                    nodeFoundForHover = true; 
+                                    throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                }
+                            },
+                            // --- Fallback Identifier visitor for general usage ---
+                            Identifier(node, ancestors) {
+                                if (nodeFoundForHover) return; // If a more specific handler above found it.
+
+                                const isCorrectLine = node.loc.start.line === (editorPos.line + 1);
+                                const isCorrectName = node.name === editorToken.string;
+                                const isCursorWithinNodeHorizontally = node.loc.start.column <= editorPos.ch && editorPos.ch < node.loc.end.column;
+
+                                if (isCorrectLine && isCorrectName && isCursorWithinNodeHorizontally) {
+                                    const parent = ancestors[ancestors.length - 2];
+                                    // const grandParent = ancestors[ancestors.length - 3]; // Not always needed here
+                                    if (!parent) return; 
+
+                                    // Avoid re-processing if it's an ID/Param/Key of a declaration already handled by specific visitors
+                                    if (parent.type === 'FunctionDeclaration' && parent.id === node) return;
+                                    if (parent.type === 'VariableDeclarator' && parent.id === node) return;
+                                    if (parent.type === 'Property' && parent.key === node) return; // Handled by Property visitor if it's a key
+                                    
+                                    // Check if it's a parameter that was missed by direct Function/Arrow/VarDecl visitors
+                                    // This can happen if the parent function node itself wasn't the direct ancestor checked
+                                    let isHandledAsParamAlready = false;
+                                    for(let i = ancestors.length - 2; i >=0; i--) {
+                                        const ancestor = ancestors[i];
+                                        if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(ancestor.type)) {
+                                            const paramMatch = ancestor.params.find(p => {
+                                                let pNode = p;
+                                                if (p.type === 'AssignmentPattern') pNode = p.left;
+                                                if (p.type === 'RestElement') pNode = p.argument;
+                                                return pNode === node;
+                                            });
+                                            if (paramMatch) {
+                                                isHandledAsParamAlready = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (isHandledAsParamAlready) return;
+
+
+                                    // CRITICAL: Check for MemberExpression Property (e.g. obj.message - hovering 'message')
+                                    if (parent.type === 'MemberExpression' && parent.property === node && !parent.computed) {
+                                        BROWSER_CONSOLE_LOG(`[MATCH Identifier USAGE - MemberExpression Property] Token: '${editorToken.string}', AST Property: '${node.name}'`);
+                                        signatureContent = `<b>(property) ${node.name}</b>: type unknown`;
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                    // Existing logic for call expressions and other general usages
+                                    else if (parent.type === 'CallExpression' && parent.callee === node) {
+                                        BROWSER_CONSOLE_LOG(`[MATCH Identifier USAGE - Call Callee] Token: '${editorToken.string}', AST Callee: '${node.name}'`);
+                                        signatureContent = getFunctionSignatureString(node.name, typeCache[node.name]);
+                                    } else { // General variable or parameter usage (not definition, not property access)
+                                        BROWSER_CONSOLE_LOG(`[MATCH Identifier USAGE - General] Token: '${editorToken.string}', AST Node: '${node.name}', ParentType: ${parent.type}`);
+                                        let isParamUsage = false;
+                                        // Check if it's a parameter being used within a function body
+                                        for (let i = ancestors.length - 2; i >= 0; i--) {
+                                            const ancestorFuncNode = ancestors[i];
+                                            if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(ancestorFuncNode.type)) {
+                                                const paramDefNode = ancestorFuncNode.params.find(pNode => {
+                                                    let pNameToMatch = null;
+                                                    if (pNode.type === 'Identifier') pNameToMatch = pNode.name;
+                                                    else if (pNode.type === 'AssignmentPattern') pNameToMatch = pNode.left.name;
+                                                    else if (pNode.type === 'RestElement') pNameToMatch = pNode.argument.name;
+                                                    return pNameToMatch === node.name;
+                                                });
+                                                if (paramDefNode) {
+                                                    let funcNameForParam = ancestorFuncNode.id ? ancestorFuncNode.id.name : null;
+                                                    if (!funcNameForParam) { 
+                                                        const funcGrandParent = (i > 0) ? ancestors[i - 1] : null;
+                                                        if(funcGrandParent) {
+                                                            if (funcGrandParent.type === 'VariableDeclarator' && funcGrandParent.init === ancestorFuncNode && funcGrandParent.id.type === 'Identifier') funcNameForParam = funcGrandParent.id.name;
+                                                            else if (funcGrandParent.type === 'Property' && funcGrandParent.value === ancestorFuncNode && funcGrandParent.key.type === 'Identifier') funcNameForParam = funcGrandParent.key.name;
+                                                        }
+                                                    }
+                                                    signatureContent = getParameterSignatureString(node.name, funcNameForParam || 'anonymous', typeCache[funcNameForParam]);
+                                                    isParamUsage = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!isParamUsage) { // If not a parameter usage, assume it's a variable usage
+                                            if (typeCache[node.name] && typeCache[node.name].paramData !== undefined) { // Could be a function variable
+                                                signatureContent = getFunctionSignatureString(node.name, typeCache[node.name]);
+                                            } else { // Or a data variable
+                                                signatureContent = `<b>(variable) ${node.name}</b>: (type from runtime or unknown)`;
+                                            }
+                                        }
+                                    }
+                                    if (signatureContent) {
+                                        nodeFoundForHover = true; 
+                                        throw new Error("__FOUND_NODE_FOR_HOVER__");
+                                    }
+                                }
+                            }
+                        });
+                    } catch (e) { 
+                        if (e.message !== "__FOUND_NODE_FOR_HOVER__") {
+                            BROWSER_CONSOLE_ERROR("[HOVER AST WALK] Error:", e.stack ? e.stack : e);
+                        }
+                    }
+
+                    if (signatureContent) {
+                        showTooltipAt(cm, event.clientX, event.clientY, signatureContent);
+                    } else {
+                        hideTooltip();
+                    }
+                }, 250);
+            });
+
+            wrapper.addEventListener('mouseout', (event) => {
+                if (!wrapper.contains(event.relatedTarget)) { clearTimeout(hoverTimeout); hideTooltip(); }
+            });
+            cm.on("scroll", () => { clearTimeout(hoverTimeout); hideTooltip(); });
+            cm.on("blur", () => { clearTimeout(hoverTimeout); hideTooltip(); });
+        }
+
+
+        function setupCodeMirror() {
+            codeMirrorEditor = CodeMirror.fromTextArea(document.getElementById('code-editor'), {
+                lineNumbers: true,
+                mode: 'javascript',
+                theme: 'material-darker',
+                indentUnit: 2, tabSize: 2,
+                autoCloseBrackets: true, matchBrackets: true,
+            });
+            codeMirrorEditor.setSize(null, "100%");
+            createTooltip(); 
+            setupEditorHoverTips(codeMirrorEditor);
+        }
+        
+        function initializeIDE() {
+            BROWSER_CONSOLE_LOG('[DEBUG] initializeIDE START');
+            setupCodeMirror();
+            attachEventListeners();
+            loadStateFromLocalStorage();
+            updateTypeSignatureDisplay();
+            
+            if (typeof astring === 'undefined') { BROWSER_CONSOLE_ERROR('[DEBUG] `astring` (global variable) is UNDEFINED after page load!'); } 
+            else { BROWSER_CONSOLE_LOG('[DEBUG] `astring` (global variable) IS DEFINED. Type:', typeof astring); }
+            
+            customConsoleOutput.push({type: 'info', message: 'Data-Driven Types IDE Initialized.', timestamp: new Date()});
+            updateConsoleDisplay();
+            BROWSER_CONSOLE_LOG('[DEBUG] initializeIDE END');
+        }
+        
+        function loadStateFromLocalStorage() { 
+            const savedCode = localStorage.getItem('ddt_ide_userCode');
+            if (savedCode && codeMirrorEditor) {
+                codeMirrorEditor.setValue(savedCode);
+            } else if (codeMirrorEditor) { 
+                codeMirrorEditor.setValue(
+`function greet(name, age, data, callback) {
+    // Hover: name, age, data, callback (params)
+    console.log("Hello, " + name + "! You are " + age + ".");
+    console.log("Data:", data);
+    let myVar = name; // Hover: myVar (variable)
+    if (callback) callback(name); // Hover: callback (call)
+} // Hover: greet (definition)
+
+const processArray = function(arr) { // Hover: processArray (definition), arr (param)
+    console.warn("Processing array:", arr); // Hover: arr (usage)
+    if (!arr || arr.length === 0) {
+        if (arr === null) return "null array";
+        return 0;
+    }
+    return arr.length;
+};
+
+const handleObject = (obj, count = 1) => { // Hover: handleObject (definition), obj, count (params)
+    console.info("Handling object:", obj.message, obj.id, "Count:", count); // Hover: obj, count (usage)
+    return { status: "processed", id: obj.id };
+};
+
+greet("Alice", 30, { items: [1,2], status: "active" }, (name) => console.log(name + " processed by callback.")); // Hover: greet (call)
+greet("Bob", 25, { items: ["a","b"], status: "pending", extra: true }, (name) => { console.log(name + " cb"); });
+greet("Charlie", undefined, null, function(name){ console.log(name + " anon func cb"); }); 
+
+processArray([1, 2, 3]); // Hover: processArray (call)
+processArray(["apple", "banana"]);
+processArray([]); 
+processArray(null);
+
+handleObject({ message: "First call", id: 101 }); // Hover: handleObject (call)
+handleObject({ message: "Second call", id: 102, details: "more info" }, 5);
+
+function testRest(a, b, ...restParams) { // Hover: testRest (def), a,b, restParams (params)
+    console.log("In testRest:", a, b, restParams); // Hover: a,b, restParams (usage)
+    let firstRest = restParams[0]; // Hover: firstRest (variable)
+    return restParams.length;
+}
+testRest(1, "two", 3, true, {val:5}); // Hover: testRest (call)
+testRest(10, "twenty");
+
+let myGlobalVar = "top level"; // Hover: myGlobalVar (variable)
+
+(function(iifeParam){ // Hover: iifeParam (param)
+    console.log("IIFE Log:", iifeParam); // Hover: iifeParam (usage)
+    let iifeVar = iifeParam; // Hover: iifeVar (variable)
+})("Hello IIFE");
+
+let myObj = { // Hover: myObj (variable)
+    value: 42, // Hover: value (property key - might be tricky to get type for this specifically)
+    description: "An object", // Hover: description
+    getValue: function() { return this.value; }, // Hover: getValue (method def)
+    setValue(v) { this.value = v; console.log("Set value to", v); } // Hover: setValue (method def), v (param)
+};
+console.log("myObj.getValue():", myObj.getValue()); // Hover: myObj (variable usage), getValue (call)
+myObj.setValue(100); // Hover: setValue (call)
+console.log("myObj.getValue() after set:", myObj.getValue());
+
+const arrowInObj = { complexMethod: (x, y) => x * y }; // Hover: arrowInObj (var), complexMethod (method def), x,y (params)
+console.log("arrowInObj.complexMethod(5,6):", arrowInObj.complexMethod(5,6)); // Hover: complexMethod(call)
+
+const literalVarNum = 123; // Hover: literalVarNum (var def)
+const literalVarStr = "text"; // Hover: literalVarStr (var def)
+const literalVarBool = true; // Hover: literalVarBool (var def)
+
+let check = literalVarNum; // Hover: check (var def), literalVarNum (var usage)
+`               );
+            }
+
+            const savedCache = localStorage.getItem('ddt_ide_typeCache');
+            if (savedCache) {
+                try { typeCache = JSON.parse(savedCache); } catch (e) { typeCache = {}; }
+            } else { typeCache = {}; } 
+        }
+        function saveStateToLocalStorage() { 
+            if (codeMirrorEditor) {
+                localStorage.setItem('ddt_ide_userCode', codeMirrorEditor.getValue());
+            }
+            localStorage.setItem('ddt_ide_typeCache', JSON.stringify(typeCache));
+        }
+        function attachEventListeners() { 
+            document.getElementById('run-button').addEventListener('click', () => executeCode());
+            document.getElementById('clear-cache-button').addEventListener('click', () => {
+                typeCache = {};
+                analysisAST = null; 
+                clearConsoleDisplay();
+                customConsoleOutput.push({type: 'info', message: 'Cache and signatures cleared.', timestamp: new Date()});
+                updateConsoleDisplay();
+                updateTypeSignatureDisplay();
+                saveStateToLocalStorage(); 
+            });
+        }
+        function overrideConsole() { 
+            const methods = ['log', 'error', 'warn', 'info', 'debug'];
+            methods.forEach(method => {
+                if (console[method]) {
+                    if (!originalConsole[method] || originalConsole[method] === console[method]) {
+                        originalConsole[method] = console[method];
+                    }
+                    console[method] = (...args) => {
+                        const processedArgs = args.map(arg => {
+                            if (arg instanceof Error) return `${arg.name}: ${arg.message}${arg.stack ? `\n${arg.stack}` : ''}`;
+                            return deepCloneSafe(arg);
+                        });
+                        const messageString = processedArgs.map(pArg => {
+                            if (typeof pArg === 'string' && (pArg === UNDEFINED_MARKER || pArg === '[Function]' || pArg === '[Circular]' || pArg === '[Max Depth Exceeded]')) return pArg;
+                            if (typeof pArg === 'object') return JSON.stringify(pArg, null, 2); 
+                            return String(pArg);
+                        }).join(' ');
+                        customConsoleOutput.push({ type: method, message: messageString, timestamp: new Date() });
+                        updateConsoleDisplay();
+                        if (originalConsole[method] && typeof originalConsole[method] === 'function') { 
+                           originalConsole[method].apply(window.console, args);
+                        }
+                    };
+                }
+            });
+        }
+        function restoreConsole() { 
+             for (const method in originalConsole) {
+                if (typeof originalConsole[method] === 'function' && console[method] !== originalConsole[method]) {
+                    console[method] = originalConsole[method];
+                }
+            }
+        }
+        function updateConsoleDisplay() { 
+            const consolePanel = document.getElementById('console-output');
+            consolePanel.innerHTML = '';
+            customConsoleOutput.forEach(log => {
+                const logElement = document.createElement('div');
+                logElement.className = 'console-message';
+                const timestampSpan = document.createElement('span');
+                timestampSpan.className = 'timestamp';
+                timestampSpan.textContent = `[${log.timestamp.toLocaleTimeString()}]`;
+                const typeSpan = document.createElement('span');
+                typeSpan.className = `type-${log.type}`;
+                typeSpan.textContent = ` [${log.type.toUpperCase()}] `;
+                const messageSpan = document.createElement('span');
+                messageSpan.className = 'message-content';
+                messageSpan.textContent = `${log.message}`;
+                logElement.appendChild(timestampSpan);
+                logElement.appendChild(typeSpan);
+                logElement.appendChild(messageSpan);
+                consolePanel.appendChild(logElement);
+            });
+            if (consolePanel.scrollHeight > consolePanel.clientHeight) {
+                consolePanel.scrollTop = consolePanel.scrollHeight;
+            }
+        }
+        function clearConsoleDisplay() {customConsoleOutput.length = 0; updateConsoleDisplay();}
+        
+        document.addEventListener('DOMContentLoaded', initializeIDE);
+    </script>
+</body>
+</html>
