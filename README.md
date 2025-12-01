@@ -1,95 +1,145 @@
-# autoTypeScript: Data-Driven Types IDE
-## Vision
+# AutoTypeScript: Data-Driven Types Extension for VS Code
 
-autoTypeScript is an experimental, in-browser JavaScript development environment that automatically derives type information from the *real data* your code processes at runtime. Instead of manual type declarations, it observes your code's behavior to infer types, aiming for a more natural and data-aware coding experience.
+## Overview
 
-This project serves as a **Proof of Concept (PoC)** demonstrating the feasibility and potential benefits of data-driven type inference in a lightweight IDE.
+AutoTypeScript is a VS Code extension that automatically generates TypeScript type definitions by capturing runtime data from your tests (unit, integration, and e2e tests). Instead of manually writing type annotations, AutoTypeScript observes how your functions are actually called during test execution and infers types from real data.
 
-## Live Demo / How to Use
+## Features
 
-1.  Save the entire [`autoTypeScript.html`](./autoTypeScript.html) (or whatever you name the final HTML file) to your local machine.
-2.  Open the HTML file in a modern web browser (e.g., Chrome, Firefox, Edge).
-3.  The IDE will load with example JavaScript code.
-4.  **Write & Edit Code:** Modify the code in the editor panel on the left.
-5.  **Run Code:** Click the "Run Code" button.
-    *   Your code will be executed.
-    *   Console output from your code will appear in the "Console Output" panel.
-    *   The "Inferred Type Signatures" panel will display the types observed for your globally defined functions based on the arguments they received during execution. This happens on the *first run* thanks to AST-based instrumentation.
-6.  **Hover for Types:**
-    *   Hover your mouse over function names (in definitions or calls), parameter names (in definitions or usages), and variable names in the code editor.
-    *   A tooltip should appear displaying the inferred type signature or type information for the hovered identifier.
-7.  **Clear Cache:** Click "Clear Cache & Signatures" to reset all observed type information and start fresh.
-8.  **Persistence:** Your code in the editor and the accumulated type cache are saved in your browser's `localStorage` and will be restored on subsequent visits.
+- **Automatic Type Capture**: Instruments your code to capture argument types during test execution
+- **Support for Multiple Test Frameworks**: Works with Jest, Mocha, and any Node.js test runner
+- **Type Hover Information**: Displays inferred types when you hover over functions and parameters in the editor
+- **Type Definition Generation**: Generates TypeScript `.d.ts` declaration files from captured data
+- **Persistent Type Cache**: Accumulates type data across multiple test runs for better inference
 
-## Aims & Features (PoC Scope)
+## Installation
 
-*   **Automated Type Discovery via AST Instrumentation:**
-    *   Parses JavaScript code into an Abstract Syntax Tree (AST) using `acorn`.
-    *   Traverses the AST using `acorn-walk` to find function declarations and expressions.
-    *   Transforms the AST by injecting instrumentation calls to a `recordArguments` function at the beginning of user-defined functions.
-    *   Generates instrumented JavaScript code from the modified AST using `astring`.
-    *   This allows type information to be captured from the very first execution of the code.
-*   **Runtime Data Observation:**
-    *   Captures actual data values passed as arguments to instrumented functions during execution.
-*   **Data Aggregation & Caching:**
-    *   Maintains a cache of observed argument values for each parameter of each relevant function.
-    *   This cache accumulates data across multiple code execution runs.
-*   **Type Inference from Data:**
-    *   Analyzes cached argument values to infer representative data types (e.g., "number", "string", "object { shape }", "Array<type>", "function").
-    *   Supports inference of union types (e.g., `number | string`) if a parameter receives multiple distinct types.
-*   **Dynamic Type Signature Display:**
-    *   Presents inferred type signatures for user-defined global functions in a dedicated panel.
-    *   This display dynamically updates based on newly observed data.
-*   **Interactive Hover Tooltips:**
-    *   Parses the original code into an `analysisAST` for mapping editor positions.
-    *   On mouse hover in the CodeMirror editor, identifies the token and its corresponding AST node.
-    *   Provides tooltips displaying inferred types for:
-        *   Function calls.
-        *   Function definitions (declarations, expressions, arrow functions).
-        *   Parameter definitions (in function signatures).
-        *   Parameter usages (inside function bodies).
-        *   Variable declarations initialized with literals.
-*   **Reduced Boilerplate:** Aims to reduce the need for manual type annotations in many common scenarios by deriving types from data.
-*   **Improved Code Comprehension:** Provides immediate insights into expected and actual data shapes used by functions.
-*   **In-Browser Console:** Captures and displays standard `console.log/warn/error/info` output.
-*   **Session Persistence:** User code and the accumulated type cache are saved via `localStorage`.
-*   **Single-File Deliverable:** The entire PoC is contained within a single HTML file.
+### From Source
 
-## Core Technologies Used
+1. Clone the repository
+2. Run `npm install` to install dependencies
+3. Run `npm run compile` to build the extension
+4. Press F5 in VS Code to launch the Extension Development Host
 
-*   **HTML, CSS, JavaScript (ES6+)**
-*   **CodeMirror:** For the in-browser code editor.
-*   **Acorn:** A tiny, fast JavaScript parser.
-*   **Acorn-Walk:** An AST traversal utility for Acorn.
-*   **Astring:** A tiny, fast JavaScript code generator from an ESTree-compliant AST.
+### Building VSIX Package
 
-## Limitations & Future Considerations (Beyond PoC)
+```bash
+npm install
+npm run compile
+npx vsce package
+```
 
-This PoC has several limitations inherent to its scope and the complexity of full static analysis:
+Then install the generated `.vsix` file in VS Code.
 
-*   **Return Type Inference:** Currently, only parameter types are inferred. Return types are not.
-*   **Local Variable Type Inference:** Type inference for local variables within functions (beyond simple literal initializations for hover) is not implemented. Tracking type changes due to reassignments is a complex static analysis problem.
-*   **Complex Scopes & Closures:** While basic parameter usage is handled, deeply nested closures or complex scope interactions might not have their types fully resolved for hovers.
-*   **Object Property Types on Hover:** Hovering over a property access like `obj.propertyName` (when hovering `propertyName`) shows `(property) propertyName: type unknown`. Inferring and displaying the type of `propertyName` based on data observed for `obj` is a more advanced feature.
-*   **`this` Keyword Type:** The type of `this` within functions is not inferred.
-*   **Build Steps/Modules:** For a real-world application, a proper build system and module bundler would be used instead of CDNs for libraries.
-*   **Advanced IDE Features:** No autocompletion based on inferred types, advanced refactoring, or sophisticated error checking beyond runtime errors.
-*   **Performance:** AST parsing and walking on every run/hover is generally fast for small-to-medium code snippets but could be optimized for larger codebases (e.g., incremental parsing, debouncing analysis).
-*   **Robustness of AST Name/Role Detection:** Identifying the "name" or "role" of function expressions or arrow functions assigned in various ways (e.g., immediately invoked, passed as high-order arguments without direct assignment) can be heuristically challenging without a full semantic graph.
-*   **Type System Completeness:** The inferred types are representative of observed data, not a formally verified sound type system like TypeScript. It won't catch all potential type errors before runtime.
+## Usage
 
-## Conclusion
+### 1. Configure Your Test Command
 
-autoTypeScript successfully demonstrates the core concept of deriving JavaScript type information directly from runtime data within a lightweight, browser-based IDE. The use of AST instrumentation allows for immediate type feedback, and the hover tooltips enhance code comprehension by providing contextual type insights. While it has limitations as a PoC, it highlights a promising direction for more data-aware and intuitive JavaScript development tooling.
+Open VS Code settings and configure `autotypescript.testCommand`:
 
-## Development Notes
+```json
+{
+    "autotypescript.testCommand": "npm test"
+}
+```
 
-The project is contained in a single HTML file. Key JavaScript sections include:
-*   Global state management (`typeCache`, `analysisAST`).
-*   AST transformation (`transformCodeForInstrumentation`, `instrumentFunctionNode`).
-*   Runtime data recording (`window.__DDT_IDE__.recordArguments`).
-*   Type inference logic (`inferSingleValueType`, `inferTypeForParam`).
-*   UI update functions (`updateTypeSignatureDisplay`, `updateConsoleDisplay`).
-*   CodeMirror setup and hover tooltip logic (`setupEditorHoverTips`, `showTooltipAt`, etc.).
+### 2. Run Tests with Type Capture
 
-External libraries (`CodeMirror`, `Acorn`, `Acorn-Walk`, `Astring`) are loaded via CDN.
+1. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
+2. Run "AutoTypeScript: Run Tests with Type Capture"
+3. Your tests will execute, and AutoTypeScript will capture type information
+
+### 3. Generate Type Definitions
+
+1. Open the Command Palette
+2. Run "AutoTypeScript: Generate Type Definitions"
+3. TypeScript declaration files will be generated in the configured output directory
+
+### 4. View Inferred Types
+
+- Hover over function names, parameters, and variables to see their inferred types
+- Run "AutoTypeScript: Show Type Cache" to see all captured type data
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `AutoTypeScript: Run Tests with Type Capture` | Execute tests while capturing runtime type data |
+| `AutoTypeScript: Generate Type Definitions` | Generate `.d.ts` files from captured type data |
+| `AutoTypeScript: Clear Type Cache` | Reset all captured type information |
+| `AutoTypeScript: Show Type Cache` | Display the current type cache contents |
+
+## Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `autotypescript.testCommand` | `"npm test"` | Command to run your tests |
+| `autotypescript.outputPath` | `"./generated-types"` | Output directory for generated type definitions |
+| `autotypescript.maxSamplesPerParam` | `50` | Maximum samples to keep per parameter |
+
+## How It Works
+
+1. **AST Instrumentation**: When you run tests with type capture, AutoTypeScript parses your JavaScript/TypeScript code using Acorn and injects instrumentation calls at the beginning of each function.
+
+2. **Runtime Data Collection**: During test execution, the instrumentation captures the actual values passed to each function parameter.
+
+3. **Type Inference**: The captured data is analyzed to infer TypeScript types. For example:
+   - If a parameter always receives numbers, it's typed as `number`
+   - If it receives both numbers and strings, it's typed as `number | string`
+   - Object shapes are inferred from their properties
+
+4. **Type Definition Generation**: The inferred types are compiled into TypeScript declaration files.
+
+## Example
+
+Given this JavaScript function:
+
+```javascript
+function greet(name, age, options) {
+    console.log(`Hello, ${name}! You are ${age}.`);
+}
+```
+
+And these test calls:
+
+```javascript
+greet("Alice", 30, { formal: true });
+greet("Bob", 25, { formal: false, title: "Mr." });
+```
+
+AutoTypeScript will generate:
+
+```typescript
+declare function greet(
+    name: string,
+    age: number,
+    options: { formal: boolean } | { formal: boolean; title: string }
+): unknown;
+```
+
+## Supported Syntax
+
+- Function declarations
+- Function expressions
+- Arrow functions
+- Object methods
+- Default parameters
+- Rest parameters
+
+## Limitations
+
+- Return types are not currently inferred (marked as `unknown`)
+- Complex generic types are simplified
+- Types are based only on observed data during test runs
+- Deeply nested objects may be truncated
+
+## Browser-Based PoC
+
+The repository also includes `index.html`, an in-browser proof of concept demonstrating the core type inference functionality.
+
+## Technologies
+
+- **VS Code Extension API**: For IDE integration
+- **Acorn**: JavaScript parser for AST manipulation
+- **Acorn-Walk**: AST traversal
+- **Astring**: Code generation from AST
