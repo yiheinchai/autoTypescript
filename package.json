@@ -2,7 +2,7 @@
   "name": "autotypescript",
   "displayName": "AutoTypeScript",
   "description": "Automatically generate TypeScript types from runtime data captured during test execution",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "yiheinchai",
   "author": {
     "name": "Yi Hein Chai"
@@ -37,8 +37,7 @@
     "javascript"
   ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:typescript"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {

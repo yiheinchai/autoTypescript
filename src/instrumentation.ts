@@ -187,16 +187,34 @@ function instrumentFunctionNode(
 /**
  * Generate the runtime code that needs to be injected into the test environment
  */
-export function generateRuntimeInstrumentationCode(outputFile: string): string {
+export function generateRuntimeInstrumentationCode(
+  outputFile: string,
+  setupDir: string
+): string {
+  // Use the local node_modules in the .autotypescript directory
+  const localModulesPath = JSON.stringify(setupDir + "/node_modules");
+
   return `
 // AutoTypeScript Runtime Instrumentation
 (function() {
     const fs = require('fs');
     const path = require('path');
     const Module = require('module');
-    const acorn = require('acorn');
-    const walk = require('acorn-walk');
-    const astring = require('astring');
+    
+    // Try to load from local .autotypescript/node_modules first, then fall back to project's node_modules
+    function tryRequire(moduleName) {
+        const localPath = path.join(${localModulesPath}, moduleName);
+        try {
+            return require(localPath);
+        } catch (e) {
+            // Fall back to normal require
+            return require(moduleName);
+        }
+    }
+    
+    const acorn = tryRequire('acorn');
+    const walk = tryRequire('acorn-walk');
+    const astring = tryRequire('astring');
     
     const UNDEFINED_MARKER = '[[UNDEFINED_MARKER_VALUE]]';
     const MAX_SAMPLES_PER_PARAM = 50;
