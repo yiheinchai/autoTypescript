@@ -1,0 +1,128 @@
+{
+  "name": "autotypescript",
+  "displayName": "AutoTypeScript",
+  "description": "Automatically generate TypeScript types from runtime data captured during test execution",
+  "version": "1.0.0",
+  "publisher": "yiheinchai",
+  "author": {
+    "name": "Yi Hein Chai"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yiheinchai/autoTypescript"
+  },
+  "bugs": {
+    "url": "https://github.com/yiheinchai/autoTypescript/issues"
+  },
+  "homepage": "https://github.com/yiheinchai/autoTypescript#readme",
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#3178C6",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "typescript",
+    "types",
+    "type-inference",
+    "testing",
+    "javascript"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "autotypescript.runTestsWithCapture",
+        "title": "AutoTypeScript: Run Tests with Type Capture"
+      },
+      {
+        "command": "autotypescript.generateTypes",
+        "title": "AutoTypeScript: Generate Type Definitions"
+      },
+      {
+        "command": "autotypescript.clearCache",
+        "title": "AutoTypeScript: Clear Type Cache"
+      },
+      {
+        "command": "autotypescript.showTypeCache",
+        "title": "AutoTypeScript: Show Type Cache"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "autotypescript-explorer",
+          "title": "AutoTypeScript",
+          "icon": "$(symbol-type-parameter)"
+        }
+      ]
+    },
+    "views": {
+      "autotypescript-explorer": [
+        {
+          "id": "autotypescriptTypeCache",
+          "name": "Type Cache",
+          "contextualTitle": "AutoTypeScript Type Cache"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AutoTypeScript",
+      "properties": {
+        "autotypescript.testCommand": {
+          "type": "string",
+          "default": "npm test",
+          "description": "Command to run tests (e.g., 'npm test', 'jest', 'mocha')"
+        },
+        "autotypescript.outputPath": {
+          "type": "string",
+          "default": "./generated-types",
+          "description": "Output directory for generated type definition files"
+        },
+        "autotypescript.maxSamplesPerParam": {
+          "type": "number",
+          "default": 50,
+          "description": "Maximum number of samples to keep per parameter for type inference"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.54.0",
+    "glob": "^10.3.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "acorn": "^8.11.0",
+    "acorn-walk": "^8.3.0",
+    "astring": "^1.8.6"
+  }
+}

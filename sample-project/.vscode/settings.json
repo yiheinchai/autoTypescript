@@ -1,0 +1,4 @@
+{
+  "autotypescript.testCommand": "npm test",
+  "autotypescript.outputPath": "./generated-types"
+}
