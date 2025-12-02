@@ -49,7 +49,8 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('autotypescript.runTestsWithCapture', runTestsWithCapture),
         vscode.commands.registerCommand('autotypescript.generateTypes', generateTypes),
         vscode.commands.registerCommand('autotypescript.clearCache', clearCache),
-        vscode.commands.registerCommand('autotypescript.showTypeCache', showTypeCache)
+        vscode.commands.registerCommand('autotypescript.showTypeCache', showTypeCache),
+        vscode.commands.registerCommand('autotypescript.addTypeAnnotation', addTypeAnnotation)
     );
 
     outputChannel.appendLine(`Workspace root: ${workspaceRoot}`);
@@ -251,4 +252,103 @@ async function showTypeCache(): Promise<void> {
 
     // Clean up registration after a delay
     setTimeout(() => registration.dispose(), 60000);
+}
+
+/**
+ * Interface for the add type annotation command arguments
+ */
+interface AddTypeAnnotationArgs {
+    uri: string;
+    position: { line: number; character: number };
+    wordRange: { 
+        start: { line: number; character: number };
+        end: { line: number; character: number };
+    };
+    inferredType: string;
+    addTypeInfo: {
+        kind: 'parameter' | 'variable' | 'function';
+        name: string;
+        funcName?: string;
+        paramIndex?: number;
+    };
+}
+
+/**
+ * Add type annotation to a parameter or variable
+ */
+async function addTypeAnnotation(argsJson: string): Promise<void> {
+    try {
+        const args: AddTypeAnnotationArgs = JSON.parse(decodeURIComponent(argsJson));
+        const uri = vscode.Uri.parse(args.uri);
+        const document = await vscode.workspace.openTextDocument(uri);
+        
+        const wordRange = new vscode.Range(
+            new vscode.Position(args.wordRange.start.line, args.wordRange.start.character),
+            new vscode.Position(args.wordRange.end.line, args.wordRange.end.character)
+        );
+
+        const edit = new vscode.WorkspaceEdit();
+        
+        if (args.addTypeInfo.kind === 'parameter') {
+            // For parameters, add type annotation after the parameter name
+            // e.g., "name" -> "name: string"
+            const line = document.lineAt(wordRange.start.line);
+            const lineText = line.text;
+            
+            // Find the parameter in the line and add the type annotation
+            const paramEndPos = wordRange.end;
+            
+            // Check if there's already a type annotation
+            const afterParam = lineText.substring(paramEndPos.character);
+            if (afterParam.startsWith(':')) {
+                vscode.window.showInformationMessage('This parameter already has a type annotation.');
+                return;
+            }
+            
+            // Insert the type annotation
+            const typeAnnotation = `: ${args.inferredType}`;
+            edit.insert(uri, paramEndPos, typeAnnotation);
+        } else if (args.addTypeInfo.kind === 'variable') {
+            // For variables, add type annotation after the variable name
+            const varEndPos = wordRange.end;
+            const line = document.lineAt(wordRange.start.line);
+            const lineText = line.text;
+            
+            // Check if there's already a type annotation
+            const afterVar = lineText.substring(varEndPos.character);
+            if (afterVar.startsWith(':')) {
+                vscode.window.showInformationMessage('This variable already has a type annotation.');
+                return;
+            }
+            
+            const typeAnnotation = `: ${args.inferredType}`;
+            edit.insert(uri, varEndPos, typeAnnotation);
+        } else if (args.addTypeInfo.kind === 'function') {
+            // For functions, we would need more complex handling
+            // This is a more involved feature - for now, show a message
+            vscode.window.showInformationMessage(
+                'Function type annotation requires converting to TypeScript. Use "Generate Types" command instead.'
+            );
+            return;
+        }
+
+        await vscode.workspace.applyEdit(edit);
+        
+        // Show the document with the changes
+        const editor = await vscode.window.showTextDocument(document);
+        
+        // Move cursor to the end of the insertion
+        const newPos = new vscode.Position(
+            wordRange.end.line, 
+            wordRange.end.character + args.inferredType.length + 2 // +2 for ": "
+        );
+        editor.selection = new vscode.Selection(newPos, newPos);
+        
+        outputChannel.appendLine(`[AutoTypeScript] Added type annotation: ${args.addTypeInfo.name}: ${args.inferredType}`);
+        vscode.window.showInformationMessage(`Added type annotation: ${args.addTypeInfo.name}: ${args.inferredType}`);
+        
+    } catch (error) {
+        outputChannel.appendLine(`[AutoTypeScript] Error adding type annotation: ${error}`);
+        vscode.window.showErrorMessage(`Failed to add type annotation: ${error}`);
+    }
 }

@@ -58,6 +58,10 @@
       {
         "command": "autotypescript.showTypeCache",
         "title": "AutoTypeScript: Show Type Cache"
+      },
+      {
+        "command": "autotypescript.addTypeAnnotation",
+        "title": "AutoTypeScript: Add Type Annotation"
       }
     ],
     "viewsContainers": {

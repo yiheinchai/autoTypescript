@@ -442,8 +442,12 @@ export function generateRuntimeInstrumentationCode(outputFile: string): string {
     
     // Override the compile function to transform code
     Module.prototype._compile = function(content, filename) {
-        // Only transform .js files in the workspace (not node_modules)
-        if (filename.endsWith('.js') && 
+        // Transform .js and .ts files in the workspace (not node_modules)
+        // Note: TypeScript files will have been transpiled by ts-node or similar
+        // before reaching this hook, so the content is JavaScript
+        const isJsOrTs = filename.endsWith('.js') || filename.endsWith('.ts') || 
+                         filename.endsWith('.jsx') || filename.endsWith('.tsx');
+        if (isJsOrTs && 
             filename.startsWith(workspaceRoot) && 
             !filename.includes('node_modules') &&
             !filename.includes('.autotypescript')) {

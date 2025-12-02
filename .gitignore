@@ -5,3 +5,4 @@ node_modules
 .autotypescript/
 generated-types/
 .DS_Store
+sample-project-ts/dist/
