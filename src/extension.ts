@@ -338,9 +338,11 @@ async function addTypeAnnotation(argsJson: string): Promise<void> {
         const editor = await vscode.window.showTextDocument(document);
         
         // Move cursor to the end of the insertion
+        // The type annotation prefix ": " adds 2 characters
+        const TYPE_ANNOTATION_PREFIX_LENGTH = 2;
         const newPos = new vscode.Position(
             wordRange.end.line, 
-            wordRange.end.character + args.inferredType.length + 2 // +2 for ": "
+            wordRange.end.character + args.inferredType.length + TYPE_ANNOTATION_PREFIX_LENGTH
         );
         editor.selection = new vscode.Selection(newPos, newPos);
         
