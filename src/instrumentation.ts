@@ -1,8 +1,8 @@
-import * as acorn from 'acorn';
-import * as walk from 'acorn-walk';
-import { generate } from 'astring';
+import * as acorn from "acorn";
+import * as walk from "acorn-walk";
+import { generate } from "astring";
 
-const INSTRUMENTATION_NAMESPACE = '__AUTOTYPESCRIPT__';
+const INSTRUMENTATION_NAMESPACE = "__AUTOTYPESCRIPT__";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyNode = any;
@@ -11,150 +11,196 @@ type AnyNode = any;
  * Transform JavaScript code to add instrumentation for type capture
  */
 export function transformCodeForInstrumentation(code: string): string {
-    try {
-        const ast = acorn.parse(code, {
-            ecmaVersion: 'latest',
-            locations: true,
-            allowReturnOutsideFunction: true,
-        });
-
-        walk.ancestor(ast, {
-            FunctionDeclaration(node: AnyNode, ancestors: AnyNode[]) {
-                if (node.id && node.id.name) {
-                    instrumentFunctionNode(node, node.id.name, ancestors);
-                }
-            },
-            FunctionExpression(node: AnyNode, ancestors: AnyNode[]) {
-                let name = node.id ? node.id.name : null;
-                if (!name) {
-                    const parent = ancestors[ancestors.length - 2];
-                    if (parent) {
-                        if (parent.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') {
-                            name = parent.id.name;
-                        } else if (parent.type === 'AssignmentExpression' && parent.left?.type === 'Identifier') {
-                            name = parent.left.name;
-                        } else if (parent.type === 'Property' && parent.key?.type === 'Identifier') {
-                            name = parent.key.name;
-                        }
-                    }
-                }
-                if (name) {
-                    instrumentFunctionNode(node, name, ancestors);
-                }
-            },
-            ArrowFunctionExpression(node: AnyNode, ancestors: AnyNode[]) {
-                let name: string | null = null;
-                const parent = ancestors[ancestors.length - 2];
-                if (parent) {
-                    if (parent.type === 'VariableDeclarator' && parent.id?.type === 'Identifier') {
-                        name = parent.id.name;
-                    } else if (parent.type === 'AssignmentExpression' && parent.left?.type === 'Identifier') {
-                        name = parent.left.name;
-                    } else if (parent.type === 'Property' && parent.key?.type === 'Identifier' && parent.kind === 'init') {
-                        name = parent.key.name;
-                    }
-                }
-                if (name) {
-                    instrumentFunctionNode(node, name, ancestors);
-                }
-            },
-        });
-
-        return generate(ast);
-    } catch (e) {
-        // If transformation fails, return original code
-        console.error('[AutoTypeScript] AST transformation error:', e);
-        return code;
-    }
-}
-
-function instrumentFunctionNode(node: AnyNode, funcName: string, _ancestors: AnyNode[]): void { // eslint-disable-line @typescript-eslint/no-unused-vars
-    if (node._instrumentedDDT) {
-        return;
-    }
-
-    const paramNames = (node.params || []).map((p: AnyNode) => {
-        if (p.type === 'Identifier') {
-            return p.name;
-        }
-        if (p.type === 'AssignmentPattern' && p.left?.type === 'Identifier') {
-            return p.left.name;
-        }
-        if (p.type === 'RestElement' && p.argument?.type === 'Identifier') {
-            return `...${p.argument.name}`;
-        }
-        return '_param_';
+  try {
+    const ast = acorn.parse(code, {
+      ecmaVersion: "latest",
+      locations: true,
+      allowReturnOutsideFunction: true,
     });
 
-    let argsToRecord: AnyNode;
-    // Arrow functions do not have their own `arguments` object
-    if (node.type === 'ArrowFunctionExpression') {
-        const paramIdentifiers = (node.params || []).map((p: AnyNode) => {
-            if (p.type === 'Identifier') {
-                return { type: 'Identifier', name: p.name };
-            }
-            if (p.type === 'AssignmentPattern' && p.left) {
-                return { type: 'Identifier', name: p.left.name };
-            }
-            if (p.type === 'RestElement' && p.argument) {
-                return { type: 'SpreadElement', argument: { type: 'Identifier', name: p.argument.name } };
-            }
-            return { type: 'Identifier', name: '_unknown_' };
-        });
-        argsToRecord = { type: 'ArrayExpression', elements: paramIdentifiers };
-    } else {
-        argsToRecord = { type: 'Identifier', name: 'arguments' };
-    }
-
-    const recordCall = {
-        type: 'ExpressionStatement',
-        expression: {
-            type: 'CallExpression',
-            callee: {
-                type: 'MemberExpression',
-                object: { type: 'Identifier', name: INSTRUMENTATION_NAMESPACE },
-                property: { type: 'Identifier', name: 'recordArguments' },
-                computed: false,
-            },
-            arguments: [
-                { type: 'Literal', value: funcName },
-                argsToRecord,
-                { type: 'ThisExpression' },
-                { type: 'ArrayExpression', elements: paramNames.map((name: string) => ({ type: 'Literal', value: name })) },
-            ],
-            optional: false,
-        },
-    };
-
-    if (node.body && typeof node.body === 'object' && 'type' in node.body && node.body.type === 'BlockStatement') {
-        node.body.body.unshift(recordCall);
-    } else if (node.body) {
-        // Arrow function with implicit return
-        const originalBodyExpression = node.body;
-        const returnStatement = { type: 'ReturnStatement', argument: originalBodyExpression };
-        node.body = {
-            type: 'BlockStatement',
-            body: [recordCall, returnStatement],
-        };
-        if (node.type === 'ArrowFunctionExpression') {
-            node.expression = false;
+    walk.ancestor(ast, {
+      FunctionDeclaration(node: AnyNode, ancestors: AnyNode[]) {
+        if (node.id && node.id.name) {
+          instrumentFunctionNode(node, node.id.name, ancestors);
         }
+      },
+      FunctionExpression(node: AnyNode, ancestors: AnyNode[]) {
+        let name = node.id ? node.id.name : null;
+        if (!name) {
+          const parent = ancestors[ancestors.length - 2];
+          if (parent) {
+            if (
+              parent.type === "VariableDeclarator" &&
+              parent.id?.type === "Identifier"
+            ) {
+              name = parent.id.name;
+            } else if (
+              parent.type === "AssignmentExpression" &&
+              parent.left?.type === "Identifier"
+            ) {
+              name = parent.left.name;
+            } else if (
+              parent.type === "Property" &&
+              parent.key?.type === "Identifier"
+            ) {
+              name = parent.key.name;
+            }
+          }
+        }
+        if (name) {
+          instrumentFunctionNode(node, name, ancestors);
+        }
+      },
+      ArrowFunctionExpression(node: AnyNode, ancestors: AnyNode[]) {
+        let name: string | null = null;
+        const parent = ancestors[ancestors.length - 2];
+        if (parent) {
+          if (
+            parent.type === "VariableDeclarator" &&
+            parent.id?.type === "Identifier"
+          ) {
+            name = parent.id.name;
+          } else if (
+            parent.type === "AssignmentExpression" &&
+            parent.left?.type === "Identifier"
+          ) {
+            name = parent.left.name;
+          } else if (
+            parent.type === "Property" &&
+            parent.key?.type === "Identifier" &&
+            parent.kind === "init"
+          ) {
+            name = parent.key.name;
+          }
+        }
+        if (name) {
+          instrumentFunctionNode(node, name, ancestors);
+        }
+      },
+    });
+
+    return generate(ast);
+  } catch (e) {
+    // If transformation fails, return original code
+    console.error("[AutoTypeScript] AST transformation error:", e);
+    return code;
+  }
+}
+
+function instrumentFunctionNode(
+  node: AnyNode,
+  funcName: string,
+  _ancestors: AnyNode[]
+): void {
+  // eslint-disable-line @typescript-eslint/no-unused-vars
+  if (node._instrumentedDDT) {
+    return;
+  }
+
+  const paramNames = (node.params || []).map((p: AnyNode) => {
+    if (p.type === "Identifier") {
+      return p.name;
     }
-    node._instrumentedDDT = true;
+    if (p.type === "AssignmentPattern" && p.left?.type === "Identifier") {
+      return p.left.name;
+    }
+    if (p.type === "RestElement" && p.argument?.type === "Identifier") {
+      return `...${p.argument.name}`;
+    }
+    return "_param_";
+  });
+
+  let argsToRecord: AnyNode;
+  // Arrow functions do not have their own `arguments` object
+  if (node.type === "ArrowFunctionExpression") {
+    const paramIdentifiers = (node.params || []).map((p: AnyNode) => {
+      if (p.type === "Identifier") {
+        return { type: "Identifier", name: p.name };
+      }
+      if (p.type === "AssignmentPattern" && p.left) {
+        return { type: "Identifier", name: p.left.name };
+      }
+      if (p.type === "RestElement" && p.argument) {
+        return {
+          type: "SpreadElement",
+          argument: { type: "Identifier", name: p.argument.name },
+        };
+      }
+      return { type: "Identifier", name: "_unknown_" };
+    });
+    argsToRecord = { type: "ArrayExpression", elements: paramIdentifiers };
+  } else {
+    argsToRecord = { type: "Identifier", name: "arguments" };
+  }
+
+  const recordCall = {
+    type: "ExpressionStatement",
+    expression: {
+      type: "CallExpression",
+      callee: {
+        type: "MemberExpression",
+        object: { type: "Identifier", name: INSTRUMENTATION_NAMESPACE },
+        property: { type: "Identifier", name: "recordArguments" },
+        computed: false,
+      },
+      arguments: [
+        { type: "Literal", value: funcName },
+        argsToRecord,
+        { type: "ThisExpression" },
+        {
+          type: "ArrayExpression",
+          elements: paramNames.map((name: string) => ({
+            type: "Literal",
+            value: name,
+          })),
+        },
+      ],
+      optional: false,
+    },
+  };
+
+  if (
+    node.body &&
+    typeof node.body === "object" &&
+    "type" in node.body &&
+    node.body.type === "BlockStatement"
+  ) {
+    node.body.body.unshift(recordCall);
+  } else if (node.body) {
+    // Arrow function with implicit return
+    const originalBodyExpression = node.body;
+    const returnStatement = {
+      type: "ReturnStatement",
+      argument: originalBodyExpression,
+    };
+    node.body = {
+      type: "BlockStatement",
+      body: [recordCall, returnStatement],
+    };
+    if (node.type === "ArrowFunctionExpression") {
+      node.expression = false;
+    }
+  }
+  node._instrumentedDDT = true;
 }
 
 /**
  * Generate the runtime code that needs to be injected into the test environment
  */
 export function generateRuntimeInstrumentationCode(outputFile: string): string {
-    return `
+  return `
 // AutoTypeScript Runtime Instrumentation
 (function() {
     const fs = require('fs');
     const path = require('path');
+    const Module = require('module');
+    const acorn = require('acorn');
+    const walk = require('acorn-walk');
+    const astring = require('astring');
     
     const UNDEFINED_MARKER = '[[UNDEFINED_MARKER_VALUE]]';
     const MAX_SAMPLES_PER_PARAM = 50;
+    const INSTRUMENTATION_NAMESPACE = '__AUTOTYPESCRIPT__';
     
     // Type cache stored in memory
     const typeCache = {};
@@ -243,11 +289,172 @@ export function generateRuntimeInstrumentationCode(outputFile: string): string {
                 if (!fs.existsSync(dir)) {
                     fs.mkdirSync(dir, { recursive: true });
                 }
-                fs.writeFileSync(cacheFile, JSON.stringify(typeCache, null, 2));
+                // Only save if we have actual data to prevent empty overwrites from parent processes
+                if (Object.keys(typeCache).length > 0) {
+                    fs.writeFileSync(cacheFile, JSON.stringify(typeCache, null, 2));
+                }
             } catch (e) {
                 console.error('[AutoTypeScript] Failed to save type cache:', e);
             }
         }
+    };
+    
+    // ========== Code Transformation Functions ==========
+    
+    function instrumentFunctionNode(node, funcName, ancestors) {
+        if (node._instrumentedDDT) {
+            return;
+        }
+
+        const paramNames = (node.params || []).map((p) => {
+            if (p.type === 'Identifier') {
+                return p.name;
+            }
+            if (p.type === 'AssignmentPattern' && p.left && p.left.type === 'Identifier') {
+                return p.left.name;
+            }
+            if (p.type === 'RestElement' && p.argument && p.argument.type === 'Identifier') {
+                return '...' + p.argument.name;
+            }
+            return '_param_';
+        });
+
+        let argsToRecord;
+        if (node.type === 'ArrowFunctionExpression') {
+            const paramIdentifiers = (node.params || []).map((p) => {
+                if (p.type === 'Identifier') {
+                    return { type: 'Identifier', name: p.name };
+                }
+                if (p.type === 'AssignmentPattern' && p.left) {
+                    return { type: 'Identifier', name: p.left.name };
+                }
+                if (p.type === 'RestElement' && p.argument) {
+                    return { type: 'SpreadElement', argument: { type: 'Identifier', name: p.argument.name } };
+                }
+                return { type: 'Identifier', name: '_unknown_' };
+            });
+            argsToRecord = { type: 'ArrayExpression', elements: paramIdentifiers };
+        } else {
+            argsToRecord = { type: 'Identifier', name: 'arguments' };
+        }
+
+        const recordCall = {
+            type: 'ExpressionStatement',
+            expression: {
+                type: 'CallExpression',
+                callee: {
+                    type: 'MemberExpression',
+                    object: { type: 'Identifier', name: INSTRUMENTATION_NAMESPACE },
+                    property: { type: 'Identifier', name: 'recordArguments' },
+                    computed: false,
+                },
+                arguments: [
+                    { type: 'Literal', value: funcName },
+                    argsToRecord,
+                    { type: 'ThisExpression' },
+                    { type: 'ArrayExpression', elements: paramNames.map((name) => ({ type: 'Literal', value: name })) },
+                ],
+                optional: false,
+            },
+        };
+
+        if (node.body && typeof node.body === 'object' && node.body.type === 'BlockStatement') {
+            node.body.body.unshift(recordCall);
+        } else if (node.body) {
+            const originalBodyExpression = node.body;
+            const returnStatement = { type: 'ReturnStatement', argument: originalBodyExpression };
+            node.body = {
+                type: 'BlockStatement',
+                body: [recordCall, returnStatement],
+            };
+            if (node.type === 'ArrowFunctionExpression') {
+                node.expression = false;
+            }
+        }
+        node._instrumentedDDT = true;
+    }
+    
+    function transformCode(code) {
+        try {
+            const ast = acorn.parse(code, {
+                ecmaVersion: 'latest',
+                locations: true,
+                allowReturnOutsideFunction: true,
+            });
+
+            walk.ancestor(ast, {
+                FunctionDeclaration(node, ancestors) {
+                    if (node.id && node.id.name) {
+                        instrumentFunctionNode(node, node.id.name, ancestors);
+                    }
+                },
+                FunctionExpression(node, ancestors) {
+                    let name = node.id ? node.id.name : null;
+                    if (!name) {
+                        const parent = ancestors[ancestors.length - 2];
+                        if (parent) {
+                            if (parent.type === 'VariableDeclarator' && parent.id && parent.id.type === 'Identifier') {
+                                name = parent.id.name;
+                            } else if (parent.type === 'AssignmentExpression' && parent.left && parent.left.type === 'Identifier') {
+                                name = parent.left.name;
+                            } else if (parent.type === 'Property' && parent.key && parent.key.type === 'Identifier') {
+                                name = parent.key.name;
+                            }
+                        }
+                    }
+                    if (name) {
+                        instrumentFunctionNode(node, name, ancestors);
+                    }
+                },
+                ArrowFunctionExpression(node, ancestors) {
+                    let name = null;
+                    const parent = ancestors[ancestors.length - 2];
+                    if (parent) {
+                        if (parent.type === 'VariableDeclarator' && parent.id && parent.id.type === 'Identifier') {
+                            name = parent.id.name;
+                        } else if (parent.type === 'AssignmentExpression' && parent.left && parent.left.type === 'Identifier') {
+                            name = parent.left.name;
+                        } else if (parent.type === 'Property' && parent.key && parent.key.type === 'Identifier' && parent.kind === 'init') {
+                            name = parent.key.name;
+                        }
+                    }
+                    if (name) {
+                        instrumentFunctionNode(node, name, ancestors);
+                    }
+                },
+            });
+
+            return astring.generate(ast);
+        } catch (e) {
+            // If transformation fails, return original code
+            return code;
+        }
+    }
+    
+    // ========== Require Hook ==========
+    
+    // Get the workspace root from environment or derive from cache path
+    const cacheFile = ${JSON.stringify(outputFile)};
+    const workspaceRoot = path.dirname(path.dirname(cacheFile));
+    
+    // Store the original compile function
+    const originalCompile = Module.prototype._compile;
+    
+    // Override the compile function to transform code
+    Module.prototype._compile = function(content, filename) {
+        // Only transform .js files in the workspace (not node_modules)
+        if (filename.endsWith('.js') && 
+            filename.startsWith(workspaceRoot) && 
+            !filename.includes('node_modules') &&
+            !filename.includes('.autotypescript')) {
+            try {
+                content = transformCode(content);
+            } catch (e) {
+                // If transformation fails, use original content
+                console.error('[AutoTypeScript] Failed to transform:', filename, e.message);
+            }
+        }
+        return originalCompile.call(this, content, filename);
     };
     
     // Save cache on process exit
