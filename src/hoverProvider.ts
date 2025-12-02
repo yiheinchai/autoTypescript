@@ -17,6 +17,23 @@ interface PropertyTypeInfo {
 }
 
 /**
+ * Information about a hover target that can have types added
+ */
+interface HoverInfo {
+  signature: string;
+  description?: string;
+  /** The inferred type that can be added */
+  inferredType?: string;
+  /** Information needed to add the type annotation */
+  addTypeInfo?: {
+    kind: "parameter" | "variable" | "function";
+    name: string;
+    funcName?: string;
+    paramIndex?: number;
+  };
+}
+
+/**
  * Provides hover information for inferred types
  */
 export class TypeHoverProvider implements vscode.HoverProvider {
@@ -49,14 +66,35 @@ export class TypeHoverProvider implements vscode.HoverProvider {
         allowReturnOutsideFunction: true,
       });
 
-      const hoverInfo = this.findHoverInfo(ast, word, line, column);
+      const hoverInfo = this.findHoverInfo(ast, word, line, column, document);
 
       if (hoverInfo) {
         const markdown = new vscode.MarkdownString();
+        markdown.isTrusted = true;
+        markdown.supportHtml = true;
         markdown.appendCodeblock(hoverInfo.signature, "typescript");
         if (hoverInfo.description) {
           markdown.appendText("\n" + hoverInfo.description);
         }
+        
+        // Add "Add Types" button if we have inferred type info and the variable is untyped
+        if (hoverInfo.inferredType && 
+            hoverInfo.addTypeInfo && 
+            hoverInfo.inferredType !== "unknown" &&
+            this.isTypeScriptOrJavaScript(document)) {
+          const args = encodeURIComponent(JSON.stringify({
+            uri: document.uri.toString(),
+            position: { line: position.line, character: position.character },
+            wordRange: { 
+              start: { line: wordRange.start.line, character: wordRange.start.character },
+              end: { line: wordRange.end.line, character: wordRange.end.character }
+            },
+            inferredType: hoverInfo.inferredType,
+            addTypeInfo: hoverInfo.addTypeInfo
+          }));
+          markdown.appendMarkdown(`\n\n[$(add) Add Type Annotation](command:autotypescript.addTypeAnnotation?${args})`);
+        }
+        
         return new vscode.Hover(markdown, wordRange);
       }
     } catch {
@@ -66,13 +104,22 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     return null;
   }
 
+  /**
+   * Check if the document is a TypeScript or JavaScript file
+   */
+  private isTypeScriptOrJavaScript(document: vscode.TextDocument): boolean {
+    const languageId = document.languageId;
+    return ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'].includes(languageId);
+  }
+
   private findHoverInfo(
     ast: AnyNode,
     word: string,
     line: number,
-    column: number
-  ): { signature: string; description?: string } | null {
-    let result: { signature: string; description?: string } | null = null;
+    column: number,
+    _document: vscode.TextDocument // eslint-disable-line @typescript-eslint/no-unused-vars
+  ): HoverInfo | null {
+    let result: HoverInfo | null = null;
 
     try {
       walk.ancestor(ast, {
@@ -339,12 +386,13 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     line: number,
     column: number,
     funcName: string | null | undefined
-  ): { signature: string; description?: string } | null {
+  ): HoverInfo | null {
     if (!node.params) {
       return null;
     }
 
-    for (const param of node.params) {
+    for (let paramIdx = 0; paramIdx < node.params.length; paramIdx++) {
+      const param = node.params[paramIdx];
       let paramNode = param;
       if (param.type === "AssignmentPattern" && param.left) {
         paramNode = param.left;
@@ -355,7 +403,7 @@ export class TypeHoverProvider implements vscode.HoverProvider {
 
       if (paramNode.type === "Identifier" && paramNode.name === word) {
         if (this.isPositionInNode(paramNode, line, column)) {
-          return this.getParameterSignature(word, funcName ?? null);
+          return this.getParameterSignature(word, funcName ?? null, paramIdx);
         }
       }
     }
@@ -363,10 +411,7 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     return null;
   }
 
-  private getFunctionSignature(funcName: string): {
-    signature: string;
-    description?: string;
-  } {
+  private getFunctionSignature(funcName: string): HoverInfo {
     const funcData = this.cacheManager.getFunctionData(funcName);
 
     if (!funcData) {
@@ -383,13 +428,21 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     )}): unknown`;
     const description = `${funcData.callCount} calls observed`;
 
-    return { signature, description };
+    return { 
+      signature, 
+      description,
+      addTypeInfo: {
+        kind: "function",
+        name: funcName,
+      }
+    };
   }
 
   private getParameterSignature(
     paramName: string,
-    funcName: string | null
-  ): { signature: string; description?: string } {
+    funcName: string | null,
+    paramIndex?: number
+  ): HoverInfo {
     if (!funcName) {
       return { signature: `(parameter) ${paramName}: unknown` };
     }
@@ -406,20 +459,32 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     const cleanParamName = paramName.startsWith("...")
       ? paramName.substring(3)
       : paramName;
-    const paramIndex = (funcData.paramNames || []).findIndex((p) => {
-      const cleanP = p.startsWith("...") ? p.substring(3) : p;
-      return cleanP === cleanParamName;
-    });
+    
+    // Use the provided paramIndex if available, otherwise find it
+    let resolvedParamIndex = paramIndex;
+    if (resolvedParamIndex === undefined) {
+      resolvedParamIndex = (funcData.paramNames || []).findIndex((p) => {
+        const cleanP = p.startsWith("...") ? p.substring(3) : p;
+        return cleanP === cleanParamName;
+      });
+    }
 
     let inferredType = "unknown";
-    if (paramIndex !== -1 && funcData.paramData?.[paramIndex]) {
+    if (resolvedParamIndex !== -1 && funcData.paramData?.[resolvedParamIndex]) {
       // Use pretty formatting for hover display
-      inferredType = inferTypeForParam(funcData.paramData[paramIndex], true, 0);
+      inferredType = inferTypeForParam(funcData.paramData[resolvedParamIndex], true, 0);
     }
 
     return {
       signature: `(parameter) ${paramName}: ${inferredType}`,
       description: `From function "${funcName}"`,
+      inferredType: inferredType,
+      addTypeInfo: inferredType !== "unknown" ? {
+        kind: "parameter",
+        name: paramName,
+        funcName: funcName,
+        paramIndex: resolvedParamIndex
+      } : undefined
     };
   }
 
@@ -535,7 +600,7 @@ export class TypeHoverProvider implements vscode.HoverProvider {
    */
   private getPropertySignature(
     info: PropertyTypeInfo
-  ): { signature: string; description?: string } | null {
+  ): HoverInfo | null {
     if (!info.funcName) {
       return null;
     }
@@ -583,6 +648,7 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     return {
       signature: `(property) ${propertyName}: ${inferredType}`,
       description: `From ${fullPath} in function "${info.funcName}"`,
+      inferredType: inferredType,
     };
   }
 
