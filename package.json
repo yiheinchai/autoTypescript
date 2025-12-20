@@ -1,7 +1,7 @@
 {
   "name": "autotypescript",
-  "displayName": "AutoTypeScript",
-  "description": "Automatically generate TypeScript types from runtime data captured during test execution",
+  "displayName": "AutoTypeScript & AutoPython",
+  "description": "Automatically generate TypeScript types and Python type hints from runtime data captured during test execution",
   "version": "1.0.1",
   "publisher": "yiheinchai",
   "author": {
@@ -31,10 +31,15 @@
   ],
   "keywords": [
     "typescript",
+    "python",
     "types",
     "type-inference",
+    "type-hints",
     "testing",
-    "javascript"
+    "javascript",
+    "pytest",
+    "jest",
+    "mocha"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -63,7 +68,7 @@
       "activitybar": [
         {
           "id": "autotypescript-explorer",
-          "title": "AutoTypeScript",
+          "title": "AutoPython",
           "icon": "$(symbol-type-parameter)"
         }
       ]
@@ -82,13 +87,13 @@
       "properties": {
         "autotypescript.testCommand": {
           "type": "string",
-          "default": "npm test",
-          "description": "Command to run tests (e.g., 'npm test', 'jest', 'mocha')"
+          "default": "",
+          "description": "Command to run tests (e.g., 'npm test', 'pytest', 'jest', 'mocha'). Leave empty for auto-detection."
         },
         "autotypescript.outputPath": {
           "type": "string",
           "default": "./generated-types",
-          "description": "Output directory for generated type definition files"
+          "description": "Output directory for generated type definition files (.d.ts or .pyi)"
         },
         "autotypescript.maxSamplesPerParam": {
           "type": "number",

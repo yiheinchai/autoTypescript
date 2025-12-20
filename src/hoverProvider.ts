@@ -18,6 +18,7 @@ interface PropertyTypeInfo {
 
 /**
  * Provides hover information for inferred types
+ * Supports both JavaScript/TypeScript and Python
  */
 export class TypeHoverProvider implements vscode.HoverProvider {
   private cacheManager: TypeCacheManager;
@@ -31,7 +32,6 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     position: vscode.Position,
     _token: vscode.CancellationToken // eslint-disable-line @typescript-eslint/no-unused-vars
   ): vscode.ProviderResult<vscode.Hover> {
-    const code = document.getText();
     const wordRange = document.getWordRangeAtPosition(position);
 
     if (!wordRange) {
@@ -39,6 +39,15 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     }
 
     const word = document.getText(wordRange);
+    const languageId = document.languageId;
+
+    // For Python files, use simple function name matching
+    if (languageId === 'python') {
+      return this.providePythonHover(word, wordRange);
+    }
+
+    // For JavaScript/TypeScript files, use AST-based hover
+    const code = document.getText();
     const line = position.line + 1; // AST uses 1-based lines
     const column = position.character;
 
@@ -64,6 +73,114 @@ export class TypeHoverProvider implements vscode.HoverProvider {
     }
 
     return null;
+  }
+
+  /**
+   * Provide hover information for Python code
+   */
+  private providePythonHover(word: string, wordRange: vscode.Range): vscode.Hover | null {
+    const cache = this.cacheManager.getCache();
+
+    // Check if the word matches any function in the cache
+    // Support both simple names and module.function names
+    let funcData: FunctionTypeData | null = null;
+    let matchedName = '';
+
+    // Try exact match first
+    if (cache[word]) {
+      funcData = cache[word];
+      matchedName = word;
+    } else {
+      // Try to find a match where the function name ends with this word
+      const searchPattern = '.' + word;
+      for (const funcName in cache) {
+        if (funcName.endsWith(searchPattern) || funcName === word) {
+          funcData = cache[funcName];
+          matchedName = funcName;
+          break;
+        }
+      }
+    }
+
+    if (funcData) {
+      const paramStrings = this.buildPythonParamStrings(funcData);
+      const signature = `def ${word}(${paramStrings.join(", ")}) -> Any`;
+      const description = `${funcData.callCount} calls observed`;
+
+      const markdown = new vscode.MarkdownString();
+      markdown.appendCodeblock(signature, "python");
+      markdown.appendText("\n" + description);
+      return new vscode.Hover(markdown, wordRange);
+    }
+
+    return null;
+  }
+
+  /**
+   * Build parameter strings for Python function signature
+   */
+  private buildPythonParamStrings(funcData: FunctionTypeData): string[] {
+    const paramNames = funcData.paramNames || [];
+    const paramStrings: string[] = [];
+
+    let maxParams = paramNames.length;
+    if (funcData.paramData) {
+      const indices = Object.keys(funcData.paramData).map(Number);
+      if (indices.length > 0) {
+        maxParams = Math.max(maxParams, Math.max(...indices) + 1);
+      }
+    }
+
+    for (let i = 0; i < maxParams; i++) {
+      const paramName = paramNames[i] || `arg${i}`;
+      const observedValues = funcData.paramData?.[i] || [];
+      const inferredType = this.inferPythonType(observedValues);
+      paramStrings.push(`${paramName}: ${inferredType}`);
+    }
+
+    return paramStrings;
+  }
+
+  /**
+   * Infer Python type from observed values
+   */
+  private inferPythonType(values: unknown[]): string {
+    if (!values || values.length === 0) {
+      return "Any";
+    }
+
+    const types = new Set<string>();
+
+    for (const value of values) {
+      if (value === null) {
+        types.add("None");
+      } else if (typeof value === 'boolean') {
+        types.add("bool");
+      } else if (typeof value === 'number') {
+        if (Number.isInteger(value)) {
+          types.add("int");
+        } else {
+          types.add("float");
+        }
+      } else if (typeof value === 'string') {
+        types.add("str");
+      } else if (Array.isArray(value)) {
+        types.add("List[Any]");
+      } else if (typeof value === 'object') {
+        types.add("Dict[str, Any]");
+      } else {
+        types.add("Any");
+      }
+    }
+
+    const typeList = Array.from(types);
+    if (typeList.length === 0) {
+      return "Any";
+    } else if (typeList.length === 1) {
+      return typeList[0];
+    } else {
+      return typeList.join(" | ");
+    }
   }
 
   private findHoverInfo(

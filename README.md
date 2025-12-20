@@ -2,14 +2,21 @@
 
 ## Overview
 
-AutoTypeScript is a VS Code extension that automatically generates TypeScript type definitions by capturing runtime data from your tests (unit, integration, and e2e tests). Instead of manually writing type annotations, AutoTypeScript observes how your functions are actually called during test execution and infers types from real data.
+AutoTypeScript is a VS Code extension that automatically generates TypeScript type definitions and Python type hints by capturing runtime data from your tests (unit, integration, and e2e tests). Instead of manually writing type annotations, AutoTypeScript observes how your functions are actually called during test execution and infers types from real data.
+
+**Now supports both JavaScript/TypeScript AND Python projects!**
 
 ## Features
 
 - **Automatic Type Capture**: Instruments your code to capture argument types during test execution
-- **Support for Multiple Test Frameworks**: Works with Jest, Mocha, and any Node.js test runner
+- **Multi-Language Support**: Works with both JavaScript/TypeScript and Python codebases
+- **Support for Multiple Test Frameworks**: 
+  - JavaScript: Jest, Mocha, and any Node.js test runner
+  - Python: pytest, unittest
 - **Type Hover Information**: Displays inferred types when you hover over functions and parameters in the editor
-- **Type Definition Generation**: Generates TypeScript `.d.ts` declaration files from captured data
+- **Type Definition Generation**: 
+  - Generates TypeScript `.d.ts` declaration files for JavaScript projects
+  - Generates Python `.pyi` stub files for Python projects
 - **Persistent Type Cache**: Accumulates type data across multiple test runs for better inference
 
 ## Installation
@@ -33,15 +40,25 @@ Then install the generated `.vsix` file in VS Code.
 
 ## Usage
 
-### 1. Configure Your Test Command
+### 1. Configure Your Test Command (Optional)
 
-Open VS Code settings and configure `autotypescript.testCommand`:
+The extension automatically detects whether your project is JavaScript or Python and uses appropriate defaults. You can override this in VS Code settings:
 
+**For JavaScript/TypeScript projects:**
 ```json
 {
     "autotypescript.testCommand": "npm test"
 }
 ```
+
+**For Python projects:**
+```json
+{
+    "autotypescript.testCommand": "pytest"
+}
+```
+
+Leave empty for auto-detection.
 
 ### 2. Run Tests with Type Capture
 
@@ -53,7 +70,9 @@ Open VS Code settings and configure `autotypescript.testCommand`:
 
 1. Open the Command Palette
 2. Run "AutoTypeScript: Generate Type Definitions"
-3. TypeScript declaration files will be generated in the configured output directory
+3. Type definition files will be generated in the configured output directory:
+   - **JavaScript/TypeScript**: `.d.ts` files
+   - **Python**: `.pyi` stub files
 
 ### 4. View Inferred Types
 
@@ -79,6 +98,8 @@ Open VS Code settings and configure `autotypescript.testCommand`:
 
 ## How It Works
 
+### JavaScript/TypeScript Projects
+
 1. **AST Instrumentation**: When you run tests with type capture, AutoTypeScript parses your JavaScript/TypeScript code using Acorn and injects instrumentation calls at the beginning of each function.
 
 2. **Runtime Data Collection**: During test execution, the instrumentation captures the actual values passed to each function parameter.
@@ -88,9 +109,24 @@ Open VS Code settings and configure `autotypescript.testCommand`:
    - If it receives both numbers and strings, it's typed as `number | string`
    - Object shapes are inferred from their properties
 
-4. **Type Definition Generation**: The inferred types are compiled into TypeScript declaration files.
+4. **Type Definition Generation**: The inferred types are compiled into TypeScript declaration files (`.d.ts`).
+
+### Python Projects
+
+1. **Import Hook Instrumentation**: AutoTypeScript uses Python's import system to intercept module loading and wrap functions with type capture code.
+
+2. **Runtime Data Collection**: During test execution, the wrapper functions capture the actual values passed to each parameter.
+
+3. **Type Inference**: The captured data is analyzed to infer Python types:
+   - Basic types: `str`, `int`, `float`, `bool`
+   - Collections: `List[T]`, `Dict[K, V]`
+   - Union types: `str | int`, `Dict[str, Any] | None`
+
+4. **Type Stub Generation**: The inferred types are compiled into Python stub files (`.pyi`).
 
 ## Example
+
+### JavaScript Example
 
 Given this JavaScript function:
 
@@ -117,14 +153,46 @@ declare function greet(
 ): unknown;
 ```
 
+### Python Example
+
+Given this Python function:
+
+```python
+def greet(name, age, options=None):
+    if options and options.get('formal'):
+        return f"Good day, {name}. You are {age}."
+    return f"Hey {name}! You're {age}!"
+```
+
+And these test calls:
+
+```python
+greet("Alice", 30, {'formal': True})
+greet("Bob", 25, {'formal': False, 'title': 'Mr.'})
+```
+
+AutoTypeScript will generate:
+
+```python
+def greet(name: str, age: int, options: Dict[str, Any] | None) -> Any: ...
+```
+
 ## Supported Syntax
 
+### JavaScript/TypeScript
 - Function declarations
 - Function expressions
 - Arrow functions
 - Object methods
 - Default parameters
 - Rest parameters
+
+### Python
+- Function definitions (def)
+- Methods
+- Default parameters
+- *args and **kwargs
+- Keyword arguments
 
 ## Limitations
 
@@ -140,6 +208,10 @@ The repository also includes `index.html`, an in-browser proof of concept demons
 ## Technologies
 
 - **VS Code Extension API**: For IDE integration
-- **Acorn**: JavaScript parser for AST manipulation
-- **Acorn-Walk**: AST traversal
-- **Astring**: Code generation from AST
+- **JavaScript/TypeScript**:
+  - **Acorn**: JavaScript parser for AST manipulation
+  - **Acorn-Walk**: AST traversal
+  - **Astring**: Code generation from AST
+- **Python**:
+  - **ast**: Python's built-in AST module
+  - **sys.meta_path**: Import hook system for instrumentation

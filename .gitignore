@@ -5,3 +5,9 @@ node_modules
 .autotypescript/
 generated-types/
 .DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+# Generated Python files (except in sample projects)
+/conftest.py
+/python_instrumentation.py
