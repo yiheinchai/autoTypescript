@@ -37,11 +37,11 @@ export class TestRunner {
   /**
    * Run tests with type capture instrumentation
    */
-  async runTests(testCommand: string): Promise<void> {
+  async runTests(testCommand: string, projectType: 'javascript' | 'python' | 'unknown' = 'javascript'): Promise<void> {
     this.outputChannel.show();
     this.outputChannel.appendLine("=".repeat(50));
     this.outputChannel.appendLine(
-      "[AutoTypeScript] Starting test run with type capture..."
+      `[AutoTypeScript] Starting ${projectType} test run with type capture...`
     );
     this.outputChannel.appendLine(
       `[AutoTypeScript] Test command: ${testCommand}`
@@ -50,16 +50,16 @@ export class TestRunner {
 
     try {
       // Create the instrumentation setup file
-      await this.createSetupFile();
+      await this.createSetupFile(projectType);
 
       // Determine the test framework and adjust the command
-      const adjustedCommand = this.adjustTestCommand(testCommand);
+      const adjustedCommand = this.adjustTestCommand(testCommand, projectType);
       this.outputChannel.appendLine(
         `[AutoTypeScript] Adjusted command: ${adjustedCommand}`
       );
 
       // Run the tests
-      await this.executeTests(adjustedCommand);
+      await this.executeTests(adjustedCommand, projectType);
 
       // Load the captured type data
       await this.loadCapturedData();
@@ -97,24 +97,80 @@ export class TestRunner {
   /**
    * Create the setup file that will be loaded before tests
    */
-  private async createSetupFile(): Promise<void> {
+  private async createSetupFile(projectType: 'javascript' | 'python' | 'unknown'): Promise<void> {
     const setupDir = path.dirname(this.setupFilePath);
     if (!fs.existsSync(setupDir)) {
       fs.mkdirSync(setupDir, { recursive: true });
     }
 
-    // Copy required dependencies to the setup directory
-    await this.copyDependencies(setupDir);
+    if (projectType === 'python') {
+      // Create Python instrumentation file
+      await this.createPythonSetupFile(setupDir);
+    } else {
+      // Create JavaScript instrumentation file
+      await this.copyDependencies(setupDir);
 
+      const cacheFilePath = this.cacheManager.getCacheFilePath();
+      const setupCode = generateRuntimeInstrumentationCode(
+        cacheFilePath,
+        setupDir
+      );
+
+      fs.writeFileSync(this.setupFilePath, setupCode);
+      this.outputChannel.appendLine(
+        `[AutoTypeScript] Created setup file: ${this.setupFilePath}`
+      );
+    }
+  }
+
+  /**
+   * Create Python instrumentation setup file
+   */
+  private async createPythonSetupFile(setupDir: string): Promise<void> {
+    const pythonSetupPath = path.join(setupDir, 'python_setup.py');
     const cacheFilePath = this.cacheManager.getCacheFilePath();
-    const setupCode = generateRuntimeInstrumentationCode(
-      cacheFilePath,
-      setupDir
-    );
+    
+    // Copy the Python instrumentation module to the setup directory
+    const extensionPath = vscode.extensions.getExtension(
+      "yiheinchai.autotypescript"
+    )?.extensionPath;
 
-    fs.writeFileSync(this.setupFilePath, setupCode);
+    const sourcePyInstrumentation = extensionPath 
+      ? path.join(extensionPath, 'python_instrumentation.py')
+      : path.join(__dirname, '..', '..', 'python_instrumentation.py');
+
+    if (fs.existsSync(sourcePyInstrumentation)) {
+      const destPyInstrumentation = path.join(setupDir, 'python_instrumentation.py');
+      fs.copyFileSync(sourcePyInstrumentation, destPyInstrumentation);
+    }
+
+    // Create a setup file that will be imported
+    const setupCode = `
+# AutoTypeScript Python Runtime Instrumentation Setup
+import sys
+import os
+
+# Add the setup directory to Python path
+setup_dir = os.path.dirname(os.path.abspath(__file__))
+if setup_dir not in sys.path:
+    sys.path.insert(0, setup_dir)
+
+# Import and install instrumentation
+from python_instrumentation import install_instrumentation
+
+# Workspace root is one level up from .autotypescript
+workspace_root = os.path.dirname(setup_dir)
+cache_file = ${JSON.stringify(cacheFilePath)}
+
+install_instrumentation(cache_file, workspace_root)
+
+print(f"[AutoTypeScript] Python instrumentation installed", file=sys.stderr)
+`;
+
+    fs.writeFileSync(pythonSetupPath, setupCode);
+    this.setupFilePath = pythonSetupPath; // Update setup file path for Python
     this.outputChannel.appendLine(
-      `[AutoTypeScript] Created setup file: ${this.setupFilePath}`
+      `[AutoTypeScript] Created Python setup file: ${pythonSetupPath}`
     );
   }
 
@@ -179,68 +235,122 @@ export class TestRunner {
   /**
    * Adjust the test command to include instrumentation
    */
-  private adjustTestCommand(testCommand: string): string {
+  private adjustTestCommand(testCommand: string, projectType: 'javascript' | 'python' | 'unknown'): string {
     const cmd = testCommand.toLowerCase();
 
-    // For Jest
-    if (cmd.includes("jest")) {
-      const setupFlag = `--setupFilesAfterEnv="${this.setupFilePath}"`;
-      if (!cmd.includes("--setupfilesafterenv")) {
-        return `${testCommand} ${setupFlag}`;
+    if (projectType === 'python') {
+      // For Python tests
+      if (cmd.includes('pytest')) {
+        // Add pytest plugin or conftest
+        return `${testCommand}`;
+      } else if (cmd.includes('python -m unittest')) {
+        return `${testCommand}`;
       }
-    }
-
-    // For Mocha
-    if (cmd.includes("mocha")) {
-      const requireFlag = `--require "${this.setupFilePath}"`;
-      if (!cmd.includes("--require")) {
-        return `${testCommand} ${requireFlag}`;
+      // Default Python test command
+      return testCommand;
+    } else {
+      // For JavaScript/TypeScript tests (existing logic)
+      // For Jest
+      if (cmd.includes("jest")) {
+        const setupFlag = `--setupFilesAfterEnv="${this.setupFilePath}"`;
+        if (!cmd.includes("--setupfilesafterenv")) {
+          return `${testCommand} ${setupFlag}`;
+        }
       }
-    }
 
-    // For Node directly
-    if (cmd.includes("node ")) {
-      return `node --require "${this.setupFilePath}" ${testCommand.replace(
-        /^node\s+/i,
-        ""
-      )}`;
-    }
+      // For Mocha
+      if (cmd.includes("mocha")) {
+        const requireFlag = `--require "${this.setupFilePath}"`;
+        if (!cmd.includes("--require")) {
+          return `${testCommand} ${requireFlag}`;
+        }
+      }
 
-    // For npm test - we need to pass through NODE_OPTIONS
-    if (cmd === "npm test" || cmd === "npm run test") {
+      // For Node directly
+      if (cmd.includes("node ")) {
+        return `node --require "${this.setupFilePath}" ${testCommand.replace(
+          /^node\s+/i,
+          ""
+        )}`;
+      }
+
+      // For npm test - we need to pass through NODE_OPTIONS
+      if (cmd === "npm test" || cmd === "npm run test") {
+        return testCommand;
+      }
+
+      // Default: try to use NODE_OPTIONS
       return testCommand;
     }
-
-    // Default: try to use NODE_OPTIONS
-    return testCommand;
   }
 
   /**
    * Execute the test command
    */
-  private executeTests(command: string): Promise<void> {
+  private executeTests(command: string, projectType: 'javascript' | 'python' | 'unknown'): Promise<void> {
     return new Promise((resolve, reject) => {
       const [cmd, ...args] = this.parseCommand(command);
 
-      // Set up environment with NODE_OPTIONS for instrumentation
-      const env = {
-        ...process.env,
-        NODE_OPTIONS: `--require "${this.setupFilePath}" ${
-          process.env.NODE_OPTIONS || ""
-        }`.trim(),
-        AUTOTYPESCRIPT_CACHE_PATH: this.cacheManager.getCacheFilePath(),
-      };
+      let env: NodeJS.ProcessEnv;
 
-      this.outputChannel.appendLine(
-        `[AutoTypeScript] Running: ${cmd} ${args.join(" ")}`
-      );
+      if (projectType === 'python') {
+        // Set up environment for Python tests
+        const pythonSetupPath = path.join(
+          this.workspaceRoot,
+          ".autotypescript",
+          "python_setup.py"
+        );
 
-      this.runningProcess = spawn(cmd, args, {
-        cwd: this.workspaceRoot,
-        env,
-        shell: true,
-        stdio: ["inherit", "pipe", "pipe"],
-      });
+        env = {
+          ...process.env,
+          PYTHONPATH: `${path.dirname(pythonSetupPath)}${path.delimiter}${process.env.PYTHONPATH || ''}`,
+          AUTOTYPESCRIPT_CACHE_PATH: this.cacheManager.getCacheFilePath(),
+        };
+
+        // Add -s flag to pytest to show print output and our import statement
+        if (cmd.toLowerCase().includes('pytest')) {
+          args.unshift('-s', '-p', 'no:cacheprovider');
+        }
+
+        // Prepend python -c to import our setup module
+        const importCmd = `import sys; sys.path.insert(0, '${path.dirname(pythonSetupPath)}'); import python_setup`;
+        args.unshift('-c', importCmd, '-m');
+        
+        // Use python as the command
+        const pythonCmd = 'python';
+        args.unshift(cmd);
+        
+        this.outputChannel.appendLine(
+          `[AutoTypeScript] Running: ${pythonCmd} ${args.join(" ")}`
+        );
+
+        this.runningProcess = spawn(pythonCmd, args, {
+          cwd: this.workspaceRoot,
+          env,
+          shell: true,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+      } else {
+        // Set up environment with NODE_OPTIONS for JavaScript instrumentation
+        env = {
+          ...process.env,
+          NODE_OPTIONS: `--require "${this.setupFilePath}" ${
+            process.env.NODE_OPTIONS || ""
+          }`.trim(),
+          AUTOTYPESCRIPT_CACHE_PATH: this.cacheManager.getCacheFilePath(),
+        };
+
+        this.outputChannel.appendLine(
+          `[AutoTypeScript] Running: ${cmd} ${args.join(" ")}`
+        );
+
+        this.runningProcess = spawn(cmd, args, {
+          cwd: this.workspaceRoot,
+          env,
+          shell: true,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+      }
 
       this.runningProcess.stdout?.on("data", (data) => {
         this.outputChannel.append(data.toString());
