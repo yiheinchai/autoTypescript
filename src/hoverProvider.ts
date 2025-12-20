@@ -92,8 +92,9 @@ export class TypeHoverProvider implements vscode.HoverProvider {
       matchedName = word;
     } else {
       // Try to find a match where the function name ends with this word
+      const searchPattern = '.' + word;
       for (const funcName in cache) {
-        if (funcName.endsWith('.' + word) || funcName === word) {
+        if (funcName.endsWith(searchPattern) || funcName === word) {
           funcData = cache[funcName];
           matchedName = funcName;
           break;
