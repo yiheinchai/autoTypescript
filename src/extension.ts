@@ -12,13 +12,13 @@ let outputChannel: vscode.OutputChannel;
 let typeCacheTreeProvider: TypeCacheTreeProvider;
 
 export function activate(context: vscode.ExtensionContext) {
-    outputChannel = vscode.window.createOutputChannel('AutoTypeScript');
-    outputChannel.appendLine('AutoTypeScript extension activated');
+    outputChannel = vscode.window.createOutputChannel('AutoPython');
+    outputChannel.appendLine('AutoPython extension activated');
 
     // Get workspace root
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) {
-        vscode.window.showWarningMessage('AutoTypeScript: No workspace folder open');
+        vscode.window.showWarningMessage('AutoPython: No workspace folder open');
         return;
     }
 
@@ -35,13 +35,10 @@ export function activate(context: vscode.ExtensionContext) {
     typeCacheTreeProvider = new TypeCacheTreeProvider(typeCacheManager);
     vscode.window.registerTreeDataProvider('autotypescriptTypeCache', typeCacheTreeProvider);
 
-    // Register hover provider for JavaScript and TypeScript
+    // Register hover provider for Python
     const hoverProvider = new TypeHoverProvider(typeCacheManager);
     context.subscriptions.push(
-        vscode.languages.registerHoverProvider('javascript', hoverProvider),
-        vscode.languages.registerHoverProvider('typescript', hoverProvider),
-        vscode.languages.registerHoverProvider('javascriptreact', hoverProvider),
-        vscode.languages.registerHoverProvider('typescriptreact', hoverProvider)
+        vscode.languages.registerHoverProvider('python', hoverProvider)
     );
 
     // Register commands
@@ -89,7 +86,7 @@ async function runTestsWithCapture(): Promise<void> {
         await vscode.window.withProgress(
             {
                 location: vscode.ProgressLocation.Notification,
-                title: 'AutoTypeScript: Running tests with type capture...',
+                title: 'AutoPython: Running tests with type capture...',
                 cancellable: true,
             },
             async (progress, token) => {
@@ -102,16 +99,16 @@ async function runTestsWithCapture(): Promise<void> {
             }
         );
 
-        vscode.window.showInformationMessage('AutoTypeScript: Type capture complete!');
+        vscode.window.showInformationMessage('AutoPython: Type capture complete!');
     } catch (error) {
-        vscode.window.showErrorMessage(`AutoTypeScript: Test run failed - ${error}`);
+        vscode.window.showErrorMessage(`AutoPython: Test run failed - ${error}`);
     }
 }
 
 async function generateTypes(): Promise<void> {
     const workspaceRoot = getWorkspaceRoot();
     if (!workspaceRoot) {
-        vscode.window.showErrorMessage('AutoTypeScript: No workspace folder open');
+        vscode.window.showErrorMessage('AutoPython: No workspace folder open');
         return;
     }
 
@@ -129,50 +126,43 @@ async function generateTypes(): Promise<void> {
         const stats = typeCacheManager.getStats();
 
         if (stats.functionCount === 0) {
-            vscode.window.showWarningMessage('AutoTypeScript: No type data available. Run tests with type capture first.');
+            vscode.window.showWarningMessage('AutoPython: No type data available. Run tests with type capture first.');
             return;
         }
 
-        // Generate function declarations
+        // Generate Python stub files
         const functionDefs = generateTypeDefinitions(cache);
-        const functionDefsPath = path.join(fullOutputPath, 'functions.d.ts');
+        const functionDefsPath = path.join(fullOutputPath, 'stubs.pyi');
         fs.writeFileSync(functionDefsPath, functionDefs);
 
-        // Generate interfaces
-        const interfaces = extractInterfacesFromCache(cache);
-        if (interfaces.trim()) {
-            const interfacesPath = path.join(fullOutputPath, 'interfaces.d.ts');
-            fs.writeFileSync(interfacesPath, `// Auto-generated interfaces from runtime data\n\n${interfaces}`);
-        }
-
         // Generate index file
-        const indexContent = `// AutoTypeScript Generated Types
-// Generated at: ${new Date().toISOString()}
-// Functions tracked: ${stats.functionCount}
-// Total calls observed: ${stats.totalCalls}
+        const indexContent = `"""AutoPython Generated Type Stubs
+Generated at: ${new Date().toISOString()}
+Functions tracked: ${stats.functionCount}
+Total calls observed: ${stats.totalCalls}
+"""
 
-export * from './functions';
-${interfaces.trim() ? "export * from './interfaces';" : ''}
+from .stubs import *
 `;
-        const indexPath = path.join(fullOutputPath, 'index.d.ts');
+        const indexPath = path.join(fullOutputPath, '__init__.pyi');
         fs.writeFileSync(indexPath, indexContent);
 
-        outputChannel.appendLine(`Generated type definitions in: ${fullOutputPath}`);
-        outputChannel.appendLine(`- functions.d.ts: ${stats.functionCount} function declarations`);
+        outputChannel.appendLine(`Generated type stubs in: ${fullOutputPath}`);
+        outputChannel.appendLine(`- stubs.pyi: ${stats.functionCount} function declarations`);
 
         // Open the generated file
         const doc = await vscode.workspace.openTextDocument(functionDefsPath);
         await vscode.window.showTextDocument(doc);
 
-        vscode.window.showInformationMessage(`AutoTypeScript: Generated type definitions in ${outputPath}`);
+        vscode.window.showInformationMessage(`AutoPython: Generated type stubs in ${outputPath}`);
     } catch (error) {
-        vscode.window.showErrorMessage(`AutoTypeScript: Failed to generate types - ${error}`);
+        vscode.window.showErrorMessage(`AutoPython: Failed to generate types - ${error}`);
     }
 }
 
 async function clearCache(): Promise<void> {
     const confirm = await vscode.window.showWarningMessage(
-        'AutoTypeScript: Are you sure you want to clear the type cache?',
+        'AutoPython: Are you sure you want to clear the type cache?',
         'Yes',
         'No'
     );
@@ -181,7 +171,7 @@ async function clearCache(): Promise<void> {
         typeCacheManager.clear();
         typeCacheTreeProvider.refresh();
         outputChannel.appendLine('Type cache cleared');
-        vscode.window.showInformationMessage('AutoTypeScript: Type cache cleared');
+        vscode.window.showInformationMessage('AutoPython: Type cache cleared');
     }
 }
 
@@ -190,13 +180,13 @@ async function showTypeCache(): Promise<void> {
     const stats = typeCacheManager.getStats();
 
     if (stats.functionCount === 0) {
-        vscode.window.showInformationMessage('AutoTypeScript: Type cache is empty. Run tests with type capture to collect data.');
+        vscode.window.showInformationMessage('AutoPython: Type cache is empty. Run tests with type capture to collect data.');
         return;
     }
 
     // Create a preview of the type cache
     const lines: string[] = [
-        '# AutoTypeScript - Type Cache',
+        '# AutoPython - Type Cache',
         '',
         `**Functions tracked:** ${stats.functionCount}`,
         `**Total calls observed:** ${stats.totalCalls}`,

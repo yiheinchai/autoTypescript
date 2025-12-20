@@ -1,7 +1,7 @@
 {
   "name": "autotypescript",
-  "displayName": "AutoTypeScript",
-  "description": "Automatically generate TypeScript types from runtime data captured during test execution",
+  "displayName": "AutoPython",
+  "description": "Automatically generate Python type hints from runtime data captured during test execution",
   "version": "1.0.1",
   "publisher": "yiheinchai",
   "author": {
@@ -30,11 +30,12 @@
     "Other"
   ],
   "keywords": [
-    "typescript",
+    "python",
     "types",
     "type-inference",
+    "type-hints",
     "testing",
-    "javascript"
+    "pytest"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -44,26 +45,26 @@
     "commands": [
       {
         "command": "autotypescript.runTestsWithCapture",
-        "title": "AutoTypeScript: Run Tests with Type Capture"
+        "title": "AutoPython: Run Tests with Type Capture"
       },
       {
         "command": "autotypescript.generateTypes",
-        "title": "AutoTypeScript: Generate Type Definitions"
+        "title": "AutoPython: Generate Type Hints"
       },
       {
         "command": "autotypescript.clearCache",
-        "title": "AutoTypeScript: Clear Type Cache"
+        "title": "AutoPython: Clear Type Cache"
       },
       {
         "command": "autotypescript.showTypeCache",
-        "title": "AutoTypeScript: Show Type Cache"
+        "title": "AutoPython: Show Type Cache"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "autotypescript-explorer",
-          "title": "AutoTypeScript",
+          "title": "AutoPython",
           "icon": "$(symbol-type-parameter)"
         }
       ]
@@ -78,17 +79,17 @@
       ]
     },
     "configuration": {
-      "title": "AutoTypeScript",
+      "title": "AutoPython",
       "properties": {
         "autotypescript.testCommand": {
           "type": "string",
-          "default": "npm test",
-          "description": "Command to run tests (e.g., 'npm test', 'jest', 'mocha')"
+          "default": "pytest",
+          "description": "Command to run tests (e.g., 'pytest', 'python -m pytest', 'python -m unittest')"
         },
         "autotypescript.outputPath": {
           "type": "string",
           "default": "./generated-types",
-          "description": "Output directory for generated type definition files"
+          "description": "Output directory for generated type stub (.pyi) files"
         },
         "autotypescript.maxSamplesPerParam": {
           "type": "number",
@@ -120,8 +121,5 @@
     "typescript": "^5.3.0"
   },
   "dependencies": {
-    "acorn": "^8.11.0",
-    "acorn-walk": "^8.3.0",
-    "astring": "^1.8.6"
   }
 }
